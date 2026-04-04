@@ -35,11 +35,20 @@ import {
 
 ### Available exports
 
-| Export                                 | Purpose                                                |
-| -------------------------------------- | ------------------------------------------------------ |
-| `installCommonResolveTargetErrorCases` | Shared test cases for target resolution error handling |
-| `shouldAckReaction`                    | Check whether a channel should add an ack reaction     |
-| `removeAckReactionAfterReply`          | Remove ack reaction after reply delivery               |
+| Export                                    | Purpose                                                |
+| ----------------------------------------- | ------------------------------------------------------ |
+| `installCommonResolveTargetErrorCases`    | Shared test cases for target resolution error handling |
+| `shouldAckReaction`                       | Check whether a channel should add an ack reaction     |
+| `removeAckReactionAfterReply`             | Remove ack reaction after reply delivery               |
+| `createSlackOutboundPayloadHarness`       | Test harness for Slack outbound payload construction   |
+| `buildDispatchInboundCaptureMock`         | Capture inbound dispatch calls in tests                |
+| `setDefaultChannelPluginRegistryForTests` | Set a default plugin registry for test isolation       |
+| `callGateway`                             | Call gateway methods in tests                          |
+| `createEmptyPluginRegistry`               | Create an empty plugin registry for tests              |
+| `capturePluginRegistration`               | Capture plugin registration for contract testing       |
+| `resolveProviderPluginChoice`             | Resolve provider auth choice in test contexts          |
+| `isLiveTestEnabled`                       | Check if live (non-mocked) tests are enabled           |
+| `createSandboxTestContext`                | Create sandbox test fixtures                           |
 
 ### Types
 
@@ -49,10 +58,12 @@ The testing subpath also re-exports types useful in test files:
 import type {
   ChannelAccountSnapshot,
   ChannelGatewayContext,
+  CliMockOutputRuntime,
+  CliRuntimeCapture,
+  MockFn,
   OpenClawConfig,
   PluginRuntime,
   RuntimeEnv,
-  MockFn,
 } from "openclaw/plugin-sdk/testing";
 ```
 
