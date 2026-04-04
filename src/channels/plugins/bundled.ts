@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { createJiti } from "jiti";
 import { openBoundaryFileSync } from "../../infra/boundary-file-read.js";
@@ -47,9 +48,20 @@ function resolveChannelPluginModuleEntry(
     if (!value || typeof value !== "object") {
       return null;
     }
-    const entries = Object.entries(value as Record<string, unknown>).filter(
-      ([key]) => key !== "default",
-    );
+    // Object.entries triggers getters on re-exported ESM bindings. When jiti
+    // loads a bundled channel-entry.js via CJS require, the ESM re-exports
+    // become live getters that can throw if the source chunk is still
+    // initializing (circular dependency). Safely collect entries instead.
+    const entries: [string, unknown][] = [];
+    try {
+      for (const [key, candidate] of Object.entries(value as Record<string, unknown>)) {
+        if (key !== "default") {
+          entries.push([key, candidate]);
+        }
+      }
+    } catch {
+      return null;
+    }
     const pluginCandidates = entries.filter(
       ([key, candidate]) =>
         key.endsWith("Plugin") &&
@@ -125,6 +137,19 @@ function createModuleLoader() {
   const jitiLoaders = new Map<string, ReturnType<typeof createJiti>>();
 
   return (modulePath: string) => {
+    // For already-compiled .js files in dist/, skip jiti and use Node's
+    // native require() directly. Jiti's CJS interop for ESM re-exports can
+    // trigger live getter errors when shared chunks haven't finished
+    // initializing in the module graph. Native require() in Node 22 uses
+    // importSyncForRequire which correctly handles ESM modules already
+    // present in the module graph.
+    if (modulePath.endsWith(".js") && modulePath.includes(`${path.sep}dist${path.sep}`)) {
+      return (resolvedPath: string) => {
+        const req = createRequire(import.meta.url);
+        return req(resolvedPath);
+      };
+    }
+
     const tryNative =
       shouldPreferNativeJiti(modulePath) || modulePath.includes(`${path.sep}dist${path.sep}`);
     const aliasMap = buildPluginLoaderAliasMap(modulePath, process.argv[1], import.meta.url);
@@ -161,7 +186,8 @@ function loadBundledModule(modulePath: string, rootDir: string): unknown {
   }
   const safePath = opened.path;
   fs.closeSync(opened.fd);
-  return loadModule(safePath)(safePath);
+  const result = loadModule(safePath)(safePath);
+  return result;
 }
 
 function resolveCompiledBundledModulePath(modulePath: string): string {
@@ -174,23 +200,33 @@ function resolveCompiledBundledModulePath(modulePath: string): string {
     : modulePath;
 }
 
-function resolvePreferredBundledChannelSource(
+function resolveBundledChannelSourceCandidates(
   candidate: BundledChannelDiscoveryCandidate,
   manifest: ReturnType<typeof loadPluginManifestRegistry>["plugins"][number],
-): string {
+): string[] {
+  const candidates: string[] = [];
   for (const basename of BUNDLED_CHANNEL_ENTRY_BASENAMES) {
     const preferred = resolveCompiledBundledModulePath(path.resolve(candidate.rootDir, basename));
     if (fs.existsSync(preferred)) {
-      return preferred;
+      candidates.push(preferred);
     }
   }
   const declaredEntry = candidate.packageManifest?.extensions?.find(
     (entry): entry is string => typeof entry === "string" && entry.trim().length > 0,
   );
   if (declaredEntry) {
-    return resolveCompiledBundledModulePath(path.resolve(candidate.rootDir, declaredEntry));
+    const resolved = resolveCompiledBundledModulePath(
+      path.resolve(candidate.rootDir, declaredEntry),
+    );
+    if (!candidates.includes(resolved)) {
+      candidates.push(resolved);
+    }
   }
-  return resolveCompiledBundledModulePath(manifest.source);
+  const manifestSource = resolveCompiledBundledModulePath(manifest.source);
+  if (!candidates.includes(manifestSource)) {
+    candidates.push(manifestSource);
+  }
+  return candidates;
 }
 
 function loadGeneratedBundledChannelEntries(): readonly GeneratedBundledChannelEntry[] {
@@ -218,14 +254,34 @@ function loadGeneratedBundledChannelEntries(): readonly GeneratedBundledChannelE
     seenIds.add(manifest.id);
 
     try {
-      const sourcePath = resolvePreferredBundledChannelSource(candidate, manifest);
-      const entry = resolveChannelPluginModuleEntry(
-        loadBundledModule(sourcePath, candidate.rootDir),
-      );
+      const sourceCandidates = resolveBundledChannelSourceCandidates(candidate, manifest);
+      let entry: GeneratedBundledChannelEntry["entry"] | null = null;
+      for (const sourcePath of sourceCandidates) {
+        try {
+          const loaded = loadBundledModule(sourcePath, candidate.rootDir);
+          entry = resolveChannelPluginModuleEntry(loaded);
+          if (entry) {
+            break;
+          }
+        } catch (e: unknown) {
+          // Node 22 throws ERR_REQUIRE_CYCLE_MODULE when require()ing an ESM
+          // module whose dependency graph cycles back to the caller. This
+          // happens during plugin auto-enable where config-presence calls
+          // listPotentialConfiguredChannelIds → loadBundledModule → channel-entry
+          // → runtime → ... → plugin-auto-enable → config-presence (cycle).
+          // Subsequent calls after the module graph settles will succeed, so
+          // we silently skip here and let the caller retry later.
+          const code =
+            e instanceof Error && "code" in e ? (e as NodeJS.ErrnoException).code : undefined;
+          if (code === "ERR_REQUIRE_CYCLE_MODULE") {
+            continue;
+          }
+          throw e;
+        }
+      }
       if (!entry) {
-        log.warn(
-          `[channels] bundled channel entry ${manifest.id} missing channelPlugin export from ${sourcePath}; skipping`,
-        );
+        // If all candidates failed due to require cycles, don't warn —
+        // the channel will be discovered when the module graph settles.
         continue;
       }
       const setupEntry = manifest.setupSource
