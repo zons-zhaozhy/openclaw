@@ -323,7 +323,7 @@ export async function runPreflightCompactionIfNeeded(params: {
   }
 
   const isCli = isCliProvider(params.followupRun.run.provider, params.cfg);
-  if (params.isHeartbeat || isCli) {
+  if (isCli) {
     return entry ?? params.sessionEntry;
   }
 
@@ -485,7 +485,7 @@ export async function runMemoryFlushIfNeeded(params: {
   })();
 
   const isCli = isCliProvider(params.followupRun.run.provider, params.cfg);
-  const canAttemptFlush = memoryFlushWritable && !params.isHeartbeat && !isCli;
+  const canAttemptFlush = memoryFlushWritable && !isCli;
   let entry =
     params.sessionEntry ??
     (params.sessionKey ? params.sessionStore?.[params.sessionKey] : undefined);
@@ -629,7 +629,6 @@ export async function runMemoryFlushIfNeeded(params: {
 
   const shouldFlushMemory =
     (memoryFlushWritable &&
-      !params.isHeartbeat &&
       !isCli &&
       shouldRunMemoryFlush({
         entry,

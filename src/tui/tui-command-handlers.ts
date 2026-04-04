@@ -534,7 +534,13 @@ export function createCommandHandlers(context: CommandHandlerContext) {
         runId,
       });
       if (!isBtw) {
-        setActivityStatus("waiting");
+        // Only set "waiting" if the TUI hasn't already transitioned to a
+        // more specific status via websocket events (lifecycle/tool/chat).
+        // This avoids a race where lifecycle.start arrives before the
+        // sendChat HTTP response and "waiting" overwrites "thinking".
+        if (state.activityStatus === "sending") {
+          setActivityStatus("waiting");
+        }
         tui.requestRender();
       }
     } catch (err) {

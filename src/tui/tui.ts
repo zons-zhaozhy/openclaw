@@ -472,7 +472,14 @@ export async function runTui(opts: TuiOptions) {
     );
   };
 
-  const busyStates = new Set(["sending", "waiting", "streaming", "running"]);
+  const busyStates = new Set([
+    "sending",
+    "waiting",
+    "streaming",
+    "running",
+    "thinking",
+    "tool_exec",
+  ]);
   let statusText: Text | null = null;
   let statusLoader: Loader | null = null;
 
@@ -512,6 +519,7 @@ export async function runTui(opts: TuiOptions) {
     statusContainer.addChild(statusLoader);
   };
 
+  let activeToolLabel: string | null = null;
   let waitingTick = 0;
   let waitingTimer: NodeJS.Timeout | null = null;
   let waitingPhrase: string | null = null;
@@ -536,7 +544,29 @@ export async function runTui(opts: TuiOptions) {
       return;
     }
 
-    statusLoader.setMessage(`${activityStatus} • ${elapsed} | ${connectionStatus}`);
+    // Build human-readable status prefix for each activity phase.
+    let statusPrefix: string;
+    switch (activityStatus) {
+      case "sending":
+        statusPrefix = "⏳ sending";
+        break;
+      case "running":
+        statusPrefix = "⚙️ running";
+        break;
+      case "thinking":
+        statusPrefix = activeToolLabel ?? "💭 thinking";
+        break;
+      case "streaming":
+        statusPrefix = "✏️ streaming";
+        break;
+      case "tool_exec":
+        statusPrefix = activeToolLabel ?? "🔧 working";
+        break;
+      default:
+        statusPrefix = activeToolLabel ?? activityStatus;
+        break;
+    }
+    statusLoader.setMessage(`${statusPrefix} • ${elapsed} | ${connectionStatus}`);
   };
 
   const startStatusTimer = () => {
@@ -592,6 +622,8 @@ export async function runTui(opts: TuiOptions) {
   const renderStatus = () => {
     const isBusy = busyStates.has(activityStatus);
     if (isBusy) {
+      // Reset the elapsed timer when the activity status changes so the
+      // counter always shows time spent in the current phase.
       if (!statusStartedAt || lastActivityStatus !== activityStatus) {
         statusStartedAt = Date.now();
       }
@@ -611,8 +643,13 @@ export async function runTui(opts: TuiOptions) {
       statusLoader?.stop();
       statusLoader = null;
       ensureStatusText();
-      const text = activityStatus ? `${connectionStatus} | ${activityStatus}` : connectionStatus;
-      statusText?.setText(theme.dim(text));
+      if (activityStatus && activityStatus !== "idle") {
+        // Non-idle inactive status (e.g. "error", "disconnected").
+        statusText?.setText(theme.dim(`${connectionStatus} | ${activityStatus}`));
+      } else {
+        // Idle: show a clear "ready for input" indicator.
+        statusText?.setText(theme.dim(`${connectionStatus} | ready ✓`));
+      }
     }
     lastActivityStatus = activityStatus;
   };
@@ -633,6 +670,19 @@ export async function runTui(opts: TuiOptions) {
 
   const setActivityStatus = (text: string) => {
     activityStatus = text;
+    if (text === "idle" || text === "error" || text === "aborted") {
+      activeToolLabel = null;
+    }
+    renderStatus();
+  };
+
+  const setActiveTool = (label: string | null) => {
+    activeToolLabel = label;
+    if (label) {
+      // Reset the elapsed timer when a new tool starts so the counter shows
+      // how long *this* tool has been running, not the whole run.
+      statusStartedAt = Date.now();
+    }
     renderStatus();
   };
 
@@ -717,6 +767,7 @@ export async function runTui(opts: TuiOptions) {
     tui,
     state,
     setActivityStatus,
+    setActiveTool,
     refreshSessionInfo,
     loadHistory,
     noteLocalRunId,
@@ -868,6 +919,14 @@ export async function runTui(opts: TuiOptions) {
     pairingHintShown = false;
     const reconnected = wasDisconnected;
     wasDisconnected = false;
+    // Clear stale run state from before the reconnect so the TUI does not
+    // get stuck in a streaming/running state when the gateway has already
+    // moved on.
+    if (reconnected) {
+      state.activeChatRunId = null;
+      activeToolLabel = null;
+      setActivityStatus("idle");
+    }
     setConnectionStatus("connected");
     void (async () => {
       await refreshAgents();

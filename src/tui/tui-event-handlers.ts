@@ -1,3 +1,4 @@
+import { resolveToolDisplay } from "../agents/tool-display.js";
 import { parseAgentSessionKey } from "../sessions/session-key-utils.js";
 import { asString, extractTextFromMessage, isCommandMessage } from "./tui-formatters.js";
 import { TuiStreamAssembler } from "./tui-stream-assembler.js";
@@ -31,6 +32,7 @@ type EventHandlerContext = {
   tui: EventHandlerTui;
   state: TuiStateAccess;
   setActivityStatus: (text: string) => void;
+  setActiveTool: (label: string | null) => void;
   refreshSessionInfo?: () => Promise<void>;
   loadHistory?: () => Promise<void>;
   noteLocalRunId?: (runId: string) => void;
@@ -49,6 +51,7 @@ export function createEventHandlers(context: EventHandlerContext) {
     tui,
     state,
     setActivityStatus,
+    setActiveTool,
     refreshSessionInfo,
     loadHistory,
     noteLocalRunId,
@@ -64,6 +67,27 @@ export function createEventHandlers(context: EventHandlerContext) {
   let streamAssembler = new TuiStreamAssembler();
   let lastSessionKey = state.currentSessionKey;
   let pendingHistoryRefresh = false;
+  // Track active tool calls to show in status bar.
+  const activeTools = new Map<
+    string,
+    { name: string; emoji: string; label: string; detail?: string }
+  >();
+  // Track total tools seen in the current run for progress display.
+  let completedToolCount = 0;
+
+  // Build a status label from the currently running tools.
+  // Shows the most recent tool with a count when multiple are active.
+  const buildToolStatusLabel = (): string => {
+    if (activeTools.size === 0) {
+      return "🔧 working";
+    }
+    const tools = [...activeTools.values()];
+    const latest = tools[tools.length - 1];
+    const detail = latest.detail ? `: ${latest.detail}` : "";
+    const count = completedToolCount > 0 ? ` #${completedToolCount + activeTools.size}` : "";
+    const parallel = activeTools.size > 1 ? ` (${activeTools.size})` : "";
+    return `${latest.emoji} ${latest.label}${detail}${count}${parallel}`;
+  };
 
   const pruneRunMap = (runs: Map<string, number>) => {
     if (runs.size <= 200) {
@@ -98,6 +122,8 @@ export function createEventHandlers(context: EventHandlerContext) {
     streamAssembler = new TuiStreamAssembler();
     pendingHistoryRefresh = false;
     state.pendingOptimisticUserMessage = false;
+    activeTools.clear();
+    completedToolCount = 0;
     clearLocalRunIds?.();
     clearLocalBtwRunIds?.();
     btw.clear();
@@ -137,7 +163,11 @@ export function createEventHandlers(context: EventHandlerContext) {
     noteFinalizedRun(params.runId);
     clearActiveRunIfMatch(params.runId);
     flushPendingHistoryRefreshIfIdle();
-    if (params.wasActiveRun) {
+    // Always update activity status on finalize so the TUI timer stops.
+    if (params.wasActiveRun || params.status === "error") {
+      activeTools.clear();
+      completedToolCount = 0;
+      setActiveTool(null);
       setActivityStatus(params.status);
     }
     void refreshSessionInfo?.();
@@ -152,7 +182,8 @@ export function createEventHandlers(context: EventHandlerContext) {
     sessionRuns.delete(params.runId);
     clearActiveRunIfMatch(params.runId);
     flushPendingHistoryRefreshIfIdle();
-    if (params.wasActiveRun) {
+    // Always update activity status on error/abort so the TUI timer stops.
+    if (params.wasActiveRun || params.status === "error") {
       setActivityStatus(params.status);
     }
     void refreshSessionInfo?.();
@@ -245,9 +276,14 @@ export function createEventHandlers(context: EventHandlerContext) {
         return;
       }
       chatLog.updateAssistant(displayText, evt.runId);
+      // Clear tool label when LLM starts streaming text again.
+      setActiveTool(null);
       setActivityStatus("streaming");
     }
     if (evt.state === "final") {
+      process.stderr.write(
+        `[tui-events] chat.final: run=${evt.runId.slice(0, 8)} wasActive=${state.activeChatRunId === evt.runId} stopReason=${typeof evt.message === "object" && evt.message !== null && "stopReason" in evt.message ? (evt.message as { stopReason?: string }).stopReason : "none"}\n`,
+      );
       const isLocalBtwRun = isLocalBtwRunId?.(evt.runId) ?? false;
       const wasActiveRun = state.activeChatRunId === evt.runId;
       if (!evt.message && isLocalBtwRun) {
@@ -337,9 +373,7 @@ export function createEventHandlers(context: EventHandlerContext) {
       const verbose = state.sessionInfo.verboseLevel ?? "off";
       const allowToolEvents = verbose !== "off";
       const allowToolOutput = verbose === "full";
-      if (!allowToolEvents) {
-        return;
-      }
+      // Track tools regardless of verbose level for status bar display.
       const data = evt.data ?? {};
       const phase = asString(data.phase, "");
       const toolCallId = asString(data.toolCallId, "");
@@ -348,21 +382,47 @@ export function createEventHandlers(context: EventHandlerContext) {
         return;
       }
       if (phase === "start") {
-        chatLog.startTool(toolCallId, toolName, data.args);
-      } else if (phase === "update") {
-        if (!allowToolOutput) {
-          return;
-        }
-        chatLog.updateToolResult(toolCallId, data.partialResult, {
-          partial: true,
+        const display = resolveToolDisplay({ name: toolName, args: data.args });
+        activeTools.set(toolCallId, {
+          name: toolName,
+          emoji: display.emoji,
+          label: display.label,
+          detail: display.detail,
         });
-      } else if (phase === "result") {
-        if (allowToolOutput) {
-          chatLog.updateToolResult(toolCallId, data.result, {
-            isError: Boolean(data.isError),
+        setActivityStatus("tool_exec");
+        setActiveTool(buildToolStatusLabel());
+        if (allowToolEvents) {
+          chatLog.startTool(toolCallId, toolName, data.args);
+        }
+      } else if (phase === "update") {
+        if (allowToolEvents && allowToolOutput) {
+          chatLog.updateToolResult(toolCallId, data.partialResult, {
+            partial: true,
           });
+        }
+      } else if (phase === "result") {
+        activeTools.delete(toolCallId);
+        completedToolCount++;
+        // If tools are still running, update the label; otherwise transition
+        // back to thinking (waiting for LLM to process the result).
+        if (activeTools.size > 0) {
+          setActiveTool(buildToolStatusLabel());
         } else {
-          chatLog.updateToolResult(toolCallId, { content: [] }, { isError: Boolean(data.isError) });
+          setActiveTool(null);
+          setActivityStatus("thinking");
+        }
+        if (allowToolEvents) {
+          if (allowToolOutput) {
+            chatLog.updateToolResult(toolCallId, data.result, {
+              isError: Boolean(data.isError),
+            });
+          } else {
+            chatLog.updateToolResult(
+              toolCallId,
+              { content: [] },
+              { isError: Boolean(data.isError) },
+            );
+          }
         }
       }
       tui.requestRender();
@@ -373,13 +433,27 @@ export function createEventHandlers(context: EventHandlerContext) {
         return;
       }
       const phase = typeof evt.data?.phase === "string" ? evt.data.phase : "";
+      if (phase === "end" || phase === "error") {
+        process.stderr.write(
+          `[tui-events] lifecycle.${phase}: run=${evt.runId.slice(0, 8)} isActive=${isActiveRun}\n`,
+        );
+      }
       if (phase === "start") {
-        setActivityStatus("running");
+        activeTools.clear();
+        completedToolCount = 0;
+        setActiveTool(null);
+        setActivityStatus("thinking");
       }
       if (phase === "end") {
+        activeTools.clear();
+        completedToolCount = 0;
+        setActiveTool(null);
         setActivityStatus("idle");
       }
       if (phase === "error") {
+        activeTools.clear();
+        completedToolCount = 0;
+        setActiveTool(null);
         setActivityStatus("error");
       }
       tui.requestRender();
