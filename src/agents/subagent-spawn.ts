@@ -95,6 +95,7 @@ export type SpawnSubagentParams = {
     mimeType?: string;
   }>;
   attachMountPath?: string;
+  toolsAllow?: string[];
 };
 
 export type SpawnSubagentContext = {
@@ -727,6 +728,7 @@ export async function spawnSubagentDirect(
             }
           : {}),
         ...publicSpawnedMetadata,
+        ...(params.toolsAllow ? { toolsAllow: params.toolsAllow } : {}),
       },
       timeoutMs: 10_000,
     });

@@ -90,6 +90,8 @@ export type AgentCommandOpts = {
   workspaceDir?: SpawnedRunMetadata["workspaceDir"];
   /** Force bundled MCP teardown when a one-shot local run completes. */
   cleanupBundleMcpOnRunEnd?: boolean;
+  /** Optional tool allow-list; when set, only these tools are sent to the model. */
+  toolsAllow?: string[];
 };
 
 export type AgentCommandIngressOpts = Omit<

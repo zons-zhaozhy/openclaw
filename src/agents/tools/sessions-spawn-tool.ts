@@ -124,6 +124,7 @@ const SessionsSpawnToolSchema = Type.Object({
       mountPath: Type.Optional(Type.String()),
     }),
   ),
+  toolsAllow: Type.Optional(Type.Array(Type.String())),
 });
 
 export function createSessionsSpawnTool(
@@ -191,6 +192,7 @@ export function createSessionsSpawnTool(
             mimeType?: string;
           }>)
         : undefined;
+      const toolsAllow = Array.isArray(params.toolsAllow) ? params.toolsAllow : undefined;
 
       if (streamTo && runtime !== "acp") {
         return jsonResult({
@@ -317,6 +319,7 @@ export function createSessionsSpawnTool(
             params.attachAs && typeof params.attachAs === "object"
               ? readStringParam(params.attachAs as Record<string, unknown>, "mountPath")
               : undefined,
+          toolsAllow,
         },
         {
           agentSessionKey: opts?.agentSessionKey,
