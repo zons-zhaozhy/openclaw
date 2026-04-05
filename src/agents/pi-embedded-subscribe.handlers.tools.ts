@@ -375,6 +375,9 @@ export function handleToolExecutionStart(
         ctx.log.warn(
           `read tool called without path: toolCallId=${toolCallId} argsType=${typeof args}${argsPreview ? ` argsPreview=${argsPreview}` : ""}`,
         );
+        // Skip metadata / event processing — the tool execute path will return
+        // a structured parameter-validation error to the LLM automatically.
+        return;
       }
     }
 
