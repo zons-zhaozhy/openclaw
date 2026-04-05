@@ -307,6 +307,7 @@ export const agentHandlers: GatewayRequestHandlers = {
       bestEffortDeliver?: boolean;
       label?: string;
       inputProvenance?: InputProvenance;
+      toolsAllow?: string[];
     };
     const senderIsOwner = resolveSenderIsOwnerFromClient(client);
     const allowModelOverride = resolveAllowModelOverrideFromClient(client);
@@ -838,6 +839,7 @@ export const agentHandlers: GatewayRequestHandlers = {
         extraSystemPrompt: request.extraSystemPrompt,
         internalEvents: request.internalEvents,
         inputProvenance,
+        toolsAllow: request.toolsAllow,
         // Internal-only: allow workspace override for spawned subagent runs.
         workspaceDir: resolveIngressWorkspaceOverrideForSpawnedRun({
           spawnedBy: spawnedByValue,
