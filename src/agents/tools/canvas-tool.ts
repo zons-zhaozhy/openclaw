@@ -11,7 +11,13 @@ import { getDefaultMediaLocalRoots } from "../../media/local-roots.js";
 import { imageMimeFromFormat } from "../../media/mime.js";
 import { resolveImageSanitizationLimits } from "../image-sanitization.js";
 import { optionalStringEnum, stringEnum } from "../schema/typebox.js";
-import { type AnyAgentTool, imageResult, jsonResult, readStringParam } from "./common.js";
+import {
+  asToolParams,
+  type AnyAgentTool,
+  imageResult,
+  jsonResult,
+  readStringParam,
+} from "./common.js";
 import { callGatewayTool, readGatewayCallOptions } from "./gateway.js";
 import { resolveNodeId } from "./nodes-utils.js";
 
@@ -86,7 +92,7 @@ export function createCanvasTool(options?: { config?: OpenClawConfig }): AnyAgen
       "Control node canvases (present/hide/navigate/eval/snapshot/A2UI). Use snapshot to capture the rendered UI.",
     parameters: CanvasToolSchema,
     execute: async (_toolCallId, args) => {
-      const params = args as Record<string, unknown>;
+      const params = asToolParams(args);
       const action = readStringParam(params, "action", { required: true });
       const gatewayOpts = readGatewayCallOptions(params);
 

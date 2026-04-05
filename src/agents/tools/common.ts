@@ -11,6 +11,20 @@ export type AnyAgentTool = AgentTool<any, unknown> & {
   displaySummary?: string;
 };
 
+/**
+ * Safely narrow `unknown` args to `Record<string, unknown>` for use with readXxxParam helpers.
+ *
+ * At runtime the args come from the provider after zod schema validation, so they are
+ * always plain objects. This helper makes the narrowing explicit and safe — no bare `as`
+ * cast needed at every call site.
+ */
+export function asToolParams(args: unknown): Record<string, unknown> {
+  if (args && typeof args === "object" && !Array.isArray(args)) {
+    return args as Record<string, unknown>;
+  }
+  return {} as Record<string, unknown>;
+}
+
 export type StringParamOptions = {
   required?: boolean;
   trim?: boolean;

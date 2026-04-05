@@ -17,7 +17,7 @@ import { loadWebMedia } from "../../media/web-media.js";
 import { getProviderEnvVars } from "../../secrets/provider-env-vars.js";
 import { resolveUserPath } from "../../utils.js";
 import { normalizeProviderId } from "../provider-id.js";
-import { ToolInputError, readNumberParam, readStringParam } from "./common.js";
+import { asToolParams, ToolInputError, readNumberParam, readStringParam } from "./common.js";
 import { decodeDataUrl } from "./image-tool.helpers.js";
 import {
   applyImageGenerationModelConfigDefaults,
@@ -500,7 +500,7 @@ export function createImageGenerateTool(options?: {
       'Generate new images or edit reference images with the configured or inferred image-generation model. Set agents.defaults.imageGenerationModel.primary to pick a provider/model. If you want openai/*, google/*, fal/*, or another provider, configure that provider auth/API key first. Use action="list" to inspect available providers, models, and auth hints. Generated images are delivered automatically from the tool result as MEDIA paths.',
     parameters: ImageGenerateToolSchema,
     execute: async (_toolCallId, args) => {
-      const params = args as Record<string, unknown>;
+      const params = asToolParams(args);
       const action = resolveAction(params);
       if (action === "list") {
         const providers = listRuntimeImageGenerationProviders({ config: effectiveCfg }).map(

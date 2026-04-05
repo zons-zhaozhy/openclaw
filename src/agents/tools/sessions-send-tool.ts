@@ -14,7 +14,7 @@ import {
   waitForAgentRunAndReadUpdatedAssistantReply,
 } from "../run-wait.js";
 import type { AnyAgentTool } from "./common.js";
-import { jsonResult, readStringParam } from "./common.js";
+import { asToolParams, jsonResult, readStringParam } from "./common.js";
 import {
   createSessionVisibilityGuard,
   createAgentToAgentPolicy,
@@ -82,7 +82,7 @@ export function createSessionsSendTool(opts?: {
       "Send a message into another session. Use sessionKey or label to identify the target.",
     parameters: SessionsSendToolSchema,
     execute: async (_toolCallId, args) => {
-      const params = args as Record<string, unknown>;
+      const params = asToolParams(args);
       const gatewayCall = opts?.callGateway ?? callGateway;
       const message = readStringParam(params, "message", { required: true });
       const { cfg, mainKey, alias, effectiveRequesterKey, restrictToSpawned } =

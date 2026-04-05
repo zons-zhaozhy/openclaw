@@ -28,6 +28,26 @@ vi.mock("@mariozechner/pi-ai", async () => {
   };
 });
 
+const nativePdfProviders = new Set(["anthropic", "google"]);
+vi.mock("../../media-understanding/defaults.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../media-understanding/defaults.js")>();
+  return {
+    ...actual,
+    providerSupportsNativePdfDocument: (params: { providerId: string }) =>
+      nativePdfProviders.has(params.providerId.toLowerCase()),
+    resolveAutoMediaKeyProviders: () => [...nativePdfProviders],
+    resolveDefaultMediaModel: (params: { providerId: string }) => {
+      if (params.providerId === "anthropic") {
+        return "claude-opus-4-6";
+      }
+      if (params.providerId === "google") {
+        return "gemini-2.5-pro";
+      }
+      return undefined;
+    },
+  };
+});
+
 type PdfToolModule = typeof import("./pdf-tool.js");
 let createPdfTool: PdfToolModule["createPdfTool"];
 let resolvePdfModelConfigForTool: PdfToolModule["resolvePdfModelConfigForTool"];

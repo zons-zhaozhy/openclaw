@@ -75,10 +75,15 @@ export async function sessionFileHasContent(sessionFile: string | undefined): Pr
         } catch {
           continue;
         }
-        const rec = obj as Record<string, unknown> | null;
+        const rec =
+          obj !== null && typeof obj === "object" && !Array.isArray(obj)
+            ? (obj as Record<string, unknown>)
+            : null;
         if (
           rec?.type === "message" &&
-          (rec.message as Record<string, unknown> | undefined)?.role === "assistant"
+          (typeof rec.message === "object" && rec.message !== null
+            ? (rec.message as Record<string, unknown>).role === "assistant"
+            : false)
         ) {
           return true;
         }

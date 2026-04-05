@@ -9,7 +9,7 @@ import type { SpawnedToolContext } from "../spawned-context.js";
 import { registerSubagentRun } from "../subagent-registry.js";
 import { SUBAGENT_SPAWN_MODES, spawnSubagentDirect } from "../subagent-spawn.js";
 import type { AnyAgentTool } from "./common.js";
-import { jsonResult, readStringParam, ToolInputError } from "./common.js";
+import { asToolParams, jsonResult, readStringParam, ToolInputError } from "./common.js";
 import {
   resolveDisplaySessionKey,
   resolveInternalSessionKey,
@@ -135,7 +135,7 @@ export function createSessionsSpawnTool(
       'Spawn an isolated session (runtime="subagent" or runtime="acp"). mode="run" is one-shot and mode="session" is persistent/thread-bound. Subagents inherit the parent workspace directory automatically.',
     parameters: SessionsSpawnToolSchema,
     execute: async (_toolCallId, args) => {
-      const params = args as Record<string, unknown>;
+      const params = asToolParams(args);
       const unsupportedParam = UNSUPPORTED_SESSIONS_SPAWN_PARAM_KEYS.find((key) =>
         Object.hasOwn(params, key),
       );

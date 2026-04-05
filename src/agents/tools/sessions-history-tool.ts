@@ -6,7 +6,7 @@ import { jsonUtf8Bytes } from "../../infra/json-utf8-bytes.js";
 import { redactSensitiveText } from "../../logging/redact.js";
 import { truncateUtf16Safe } from "../../utils.js";
 import type { AnyAgentTool } from "./common.js";
-import { jsonResult, readStringParam } from "./common.js";
+import { asToolParams, jsonResult, readStringParam } from "./common.js";
 import {
   createSessionVisibilityGuard,
   createAgentToAgentPolicy,
@@ -179,7 +179,7 @@ export function createSessionsHistoryTool(opts?: {
     description: "Fetch message history for a session.",
     parameters: SessionsHistoryToolSchema,
     execute: async (_toolCallId, args) => {
-      const params = args as Record<string, unknown>;
+      const params = asToolParams(args);
       const gatewayCall = opts?.callGateway ?? callGateway;
       const sessionKeyParam = readStringParam(params, "sessionKey", {
         required: true,

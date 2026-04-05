@@ -26,7 +26,7 @@ import { resolveSessionAgentId } from "../agent-scope.js";
 import { listChannelSupportedActions } from "../channel-tools.js";
 import { channelTargetSchema, channelTargetsSchema, stringEnum } from "../schema/typebox.js";
 import type { AnyAgentTool } from "./common.js";
-import { jsonResult, readNumberParam, readStringParam } from "./common.js";
+import { asToolParams, jsonResult, readNumberParam, readStringParam } from "./common.js";
 import { resolveGatewayOptions } from "./gateway.js";
 
 const AllMessageActions = CHANNEL_MESSAGE_ACTION_NAMES;
@@ -683,7 +683,7 @@ export function createMessageTool(options?: MessageToolOptions): AnyAgentTool {
         throw err;
       }
       // Shallow-copy so we don't mutate the original event args (used for logging/dedup).
-      const params = { ...(args as Record<string, unknown>) };
+      const params = { ...asToolParams(args) };
 
       // Strip reasoning tags from text fields — models may include <think>…</think>
       // in tool arguments, and the messaging tool send path has no other tag filtering.

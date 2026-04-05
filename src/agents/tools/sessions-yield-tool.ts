@@ -1,6 +1,6 @@
 import { Type } from "@sinclair/typebox";
 import type { AnyAgentTool } from "./common.js";
-import { jsonResult, readStringParam } from "./common.js";
+import { asToolParams, jsonResult, readStringParam } from "./common.js";
 
 const SessionsYieldToolSchema = Type.Object({
   message: Type.Optional(Type.String()),
@@ -17,7 +17,7 @@ export function createSessionsYieldTool(opts?: {
       "End your current turn. Use after spawning subagents to receive their results as the next message.",
     parameters: SessionsYieldToolSchema,
     execute: async (_toolCallId, args) => {
-      const params = args as Record<string, unknown>;
+      const params = asToolParams(args);
       const message = readStringParam(params, "message") || "Turn yielded.";
       if (!opts?.sessionId) {
         return jsonResult({ status: "error", error: "No session context" });

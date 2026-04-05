@@ -16,7 +16,7 @@ import {
   createPendingDescendantCounter,
 } from "../subagent-control.js";
 import type { AnyAgentTool } from "./common.js";
-import { jsonResult, readNumberParam, readStringParam } from "./common.js";
+import { asToolParams, jsonResult, readNumberParam, readStringParam } from "./common.js";
 
 const SUBAGENT_ACTIONS = ["list", "kill", "steer"] as const;
 type SubagentAction = (typeof SUBAGENT_ACTIONS)[number];
@@ -36,7 +36,7 @@ export function createSubagentsTool(opts?: { agentSessionKey?: string }): AnyAge
       "List, kill, or steer spawned sub-agents for this requester session. Use this for sub-agent orchestration.",
     parameters: SubagentsToolSchema,
     execute: async (_toolCallId, args) => {
-      const params = args as Record<string, unknown>;
+      const params = asToolParams(args);
       const action = (readStringParam(params, "action") ?? "list") as SubagentAction;
       const cfg = loadConfig();
       const controller = resolveSubagentController({

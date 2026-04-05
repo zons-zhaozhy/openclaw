@@ -9,6 +9,7 @@ import {
 import { extractPdfContent, type PdfExtractedContent } from "../../media/pdf-extract.js";
 import { loadWebMediaRaw } from "../../media/web-media.js";
 import { resolveUserPath } from "../../utils.js";
+import { asToolParams } from "./common.js";
 import {
   coerceImageModelConfig,
   type ImageModelConfig,
@@ -101,10 +102,6 @@ export function resolvePdfModelConfigForTool(params: {
     providerId: primary.provider,
     capability: "image",
   });
-  const primarySupportsNativePdf = providerSupportsNativePdfDocument({
-    cfg: params.cfg,
-    providerId: primary.provider,
-  });
   const nativePdfCandidates = resolveAutoMediaKeyProviders({
     cfg: params.cfg,
     capability: "image",
@@ -135,12 +132,15 @@ export function resolvePdfModelConfigForTool(params: {
     })
     .filter((value): value is string => Boolean(value));
 
-  if (primary.provider === "google" && googleOk && providerVision && primarySupportsNativePdf) {
+  if (nativePdfCandidates.length > 0) {
+    // Native PDF providers are always preferred for PDF analysis
+    preferred = nativePdfCandidates[0];
+  } else if (primary.provider === "google" && googleOk && providerVision) {
     preferred = providerVision;
-  } else if (providerOk && primarySupportsNativePdf && (providerVision || providerDefault)) {
+  } else if (providerOk && (providerVision || providerDefault)) {
     preferred = providerVision ?? `${primary.provider}/${providerDefault}`;
   } else {
-    preferred = nativePdfCandidates[0] ?? genericImageCandidates[0] ?? null;
+    preferred = genericImageCandidates[0] ?? null;
   }
 
   if (preferred?.trim()) {
@@ -380,7 +380,7 @@ export function createPdfTool(options?: {
       maxBytesMb: Type.Optional(Type.Number()),
     }),
     execute: async (_toolCallId, args) => {
-      const record = args && typeof args === "object" ? (args as Record<string, unknown>) : {};
+      const record = asToolParams(args);
 
       // MARK: - Normalize pdf + pdfs input
       const pdfCandidates: string[] = [];

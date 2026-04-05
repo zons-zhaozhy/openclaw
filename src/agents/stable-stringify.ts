@@ -5,8 +5,12 @@ export function stableStringify(value: unknown): string {
   if (Array.isArray(value)) {
     return `[${value.map((entry) => stableStringify(entry)).join(",")}]`;
   }
-  const record = value as Record<string, unknown>;
+  const record = asObjectRecord(value);
   const keys = Object.keys(record).toSorted();
   const entries = keys.map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`);
   return `{${entries.join(",")}}`;
+}
+
+function asObjectRecord(value: object): Record<string, unknown> {
+  return value as Record<string, unknown>;
 }

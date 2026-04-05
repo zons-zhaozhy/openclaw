@@ -18,8 +18,8 @@ export function resolveAckReaction(
   // L1: Channel account level
   if (opts?.channel && opts?.accountId) {
     const channelCfg = getChannelConfig(cfg, opts.channel);
-    const accounts = channelCfg?.accounts as Record<string, Record<string, unknown>> | undefined;
-    const accountReaction = accounts?.[opts.accountId]?.ackReaction as string | undefined;
+    const accountCfg = getChannelAccounts(channelCfg, opts.accountId);
+    const accountReaction = accountCfg?.ackReaction as string | undefined;
     if (accountReaction !== undefined) {
       return accountReaction.trim();
     }
@@ -91,6 +91,21 @@ function getChannelConfig(
     : undefined;
 }
 
+/** Safely extract accounts from a channel config object. */
+function getChannelAccounts(
+  channelCfg: Record<string, unknown> | undefined,
+  accountId: string,
+): Record<string, unknown> | undefined {
+  const accounts = channelCfg?.accounts;
+  if (typeof accounts === "object" && accounts !== null && !Array.isArray(accounts)) {
+    const account = (accounts as Record<string, unknown>)[accountId];
+    if (typeof account === "object" && account !== null && !Array.isArray(account)) {
+      return account as Record<string, unknown>;
+    }
+  }
+  return undefined;
+}
+
 export function resolveResponsePrefix(
   cfg: OpenClawConfig,
   agentId: string,
@@ -99,8 +114,8 @@ export function resolveResponsePrefix(
   // L1: Channel account level
   if (opts?.channel && opts?.accountId) {
     const channelCfg = getChannelConfig(cfg, opts.channel);
-    const accounts = channelCfg?.accounts as Record<string, Record<string, unknown>> | undefined;
-    const accountPrefix = accounts?.[opts.accountId]?.responsePrefix as string | undefined;
+    const accountCfg = getChannelAccounts(channelCfg, opts.accountId);
+    const accountPrefix = accountCfg?.responsePrefix as string | undefined;
     if (accountPrefix !== undefined) {
       if (accountPrefix === "auto") {
         return resolveIdentityNamePrefix(cfg, agentId);

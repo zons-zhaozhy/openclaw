@@ -15,6 +15,7 @@ import {
 } from "../../plugin-sdk/media-understanding.js";
 import { resolveUserPath } from "../../utils.js";
 import { isMinimaxVlmProvider } from "../minimax-vlm.js";
+import { asToolParams } from "./common.js";
 import {
   coerceImageAssistantText,
   coerceImageModelConfig,
@@ -325,7 +326,7 @@ export function createImageTool(options?: {
       maxImages: Type.Optional(Type.Number()),
     }),
     execute: async (_toolCallId, args) => {
-      const record = args && typeof args === "object" ? (args as Record<string, unknown>) : {};
+      const record = asToolParams(args);
 
       // MARK: - Normalize image + images input and dedupe while preserving order
       const imageCandidates: string[] = [];

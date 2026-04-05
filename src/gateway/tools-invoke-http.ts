@@ -256,8 +256,7 @@ export async function handleToolsInvokeHttpRequest(
   try {
     const toolCallId = `http-${Date.now()}`;
     const toolArgs = mergeActionIntoArgsIfSupported({
-      // oxlint-disable-next-line typescript/no-explicit-any
-      toolSchema: (tool as any).parameters,
+      toolSchema: tool.parameters,
       action,
       args,
     });
@@ -278,8 +277,7 @@ export async function handleToolsInvokeHttpRequest(
       });
       return true;
     }
-    // oxlint-disable-next-line typescript/no-explicit-any
-    const result = await (tool as any).execute?.(toolCallId, hookResult.params);
+    const result = await tool.execute(toolCallId, hookResult.params);
     sendJson(res, 200, { ok: true, result });
   } catch (err) {
     const inputStatus = resolveToolInputErrorStatus(err);

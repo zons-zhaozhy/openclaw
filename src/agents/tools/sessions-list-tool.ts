@@ -9,7 +9,7 @@ import {
 import { callGateway } from "../../gateway/call.js";
 import { resolveAgentIdFromSessionKey } from "../../routing/session-key.js";
 import type { AnyAgentTool } from "./common.js";
-import { jsonResult, readStringArrayParam } from "./common.js";
+import { asToolParams, jsonResult, readStringArrayParam } from "./common.js";
 import {
   createSessionVisibilityGuard,
   createAgentToAgentPolicy,
@@ -44,7 +44,7 @@ export function createSessionsListTool(opts?: {
     description: "List sessions with optional filters and last messages.",
     parameters: SessionsListToolSchema,
     execute: async (_toolCallId, args) => {
-      const params = args as Record<string, unknown>;
+      const params = asToolParams(args);
       const cfg = opts?.config ?? loadConfig();
       const { mainKey, alias, requesterInternalKey, restrictToSpawned } =
         resolveSandboxedSessionToolContext({

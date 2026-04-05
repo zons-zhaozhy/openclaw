@@ -7,7 +7,7 @@ import { wrapExternalContent, wrapWebContent } from "../../security/external-con
 import { resolveWebFetchDefinition } from "../../web-fetch/runtime.js";
 import { stringEnum } from "../schema/typebox.js";
 import type { AnyAgentTool } from "./common.js";
-import { jsonResult, readNumberParam, readStringParam } from "./common.js";
+import { asToolParams, jsonResult, readNumberParam, readStringParam } from "./common.js";
 import {
   extractBasicHtmlContent,
   extractReadableContent,
@@ -589,7 +589,7 @@ export function createWebFetchTool(options?: {
       "Fetch and extract readable content from a URL (HTML → markdown/text). Use for lightweight page access without browser automation.",
     parameters: WebFetchSchema,
     execute: async (_toolCallId, args) => {
-      const params = args as Record<string, unknown>;
+      const params = asToolParams(args);
       const url = readStringParam(params, "url", { required: true });
       const extractMode = readStringParam(params, "extractMode") === "text" ? "text" : "markdown";
       const maxChars = readNumberParam(params, "maxChars", { integer: true });
