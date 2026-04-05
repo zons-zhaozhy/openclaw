@@ -1,0 +1,304 @@
+/**
+ * Knowledge compiler hook handler
+ *
+ * After compaction, extracts knowledge from session transcripts and writes
+ * in workspace COMPILED-KNOWLEDGE.md for bootstrap injection into next session.
+ *
+ * Inspired by Karpathy's "knowledge compilation" concept - shift token budget from
+ * "manipulating code" to "manipulating information"
+ *
+ * Sessions can be ephemeral conversation. Knowledge compiler aims to:
+   Extract durable insights (patterns, decisions, lessons)
+ * Deduplicate against existing knowledge
+ * Return compiled knowledge
+ */
+
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { resolveDefaultAgentId, resolveAgentWorkspaceDir } from "../../../agents/agent-scope.js";
+import { resolveAgentEffectiveModelPrimary } from "../../../agents/agent-scope.js";
+import { DEFAULT_PROVIDER, DEFAULT_MODEL } from "../../../agents/defaults.js";
+import { parseModelRef } from "../../../agents/model-selection.js";
+import { runEmbeddedPiAgent } from "../../../agents/pi-embedded.js";
+import type { OpenClawConfig } from "../../../config/config.js";
+import { writeFileWithinRoot } from "../../../infra/fs-safe.js";
+import { createSubsystemLogger } from "../../../logging/subsystem.js";
+import { resolveHookConfig } from "../../config.js";
+import type { HookHandler } from "../../hooks.js";
+import { getRecentSessionContent } from "../session-memory/transcript.js";
+
+const log = createSubsystemLogger("hooks/knowledge-compiler");
+
+const KNOWLEDGE_FILE = "COMPILED-KNOWLEDGE.md";
+const DEFAULT_MAX_ENTRIES = 30;
+const DEFAULT_MAX_CHARS = 3000;
+const DEFAULT_MESSAGE_COUNT = 15;
+
+const DEFAULT_LLM_TIMEOUT = 15_000;
+
+const DEFAULT_MAX_LLM_ENTRIES = 5;
+
+type KnowledgeEntry = {
+  date: string;
+  category: "patterns" | "decisions" | "lessons";
+  text: string;
+  reason?: string;
+  impact?: string;
+  files?: string[];
+  technical?: string[];
+};
+
+/**
+ * Main handler: triggered after session compaction.
+ */
+const knowledgeCompilerHook: HookHandler = async (event) => {
+  if (event.type !== "session" || event.action !== "compact:after") {
+    return;
+  }
+  if (!event.context || typeof event.context !== "object") {
+    return;
+  }
+  const context = event.context;
+  const cfg = context.cfg as OpenClawConfig | undefined;
+  const sessionFile = context.sessionFile as string | undefined;
+  const workspaceDir = context.workspaceDir as string | undefined;
+  if (!cfg || !sessionFile || !workspaceDir) {
+    log.debug("Missing required context, skipping knowledge compilation");
+    return;
+  }
+
+  // Resolve config
+  const hookConfig = resolveHookConfig(cfg, "knowledge-compiler") ?? {};
+  const maxEntries =
+    typeof hookConfig.maxEntries === "number" ? hookConfig.maxEntries : DEFAULT_MAX_ENTRIES;
+  const maxChars =
+    typeof hookConfig.maxChars === "number" ? hookConfig.maxChars : DEFAULT_MAX_CHARS;
+  const messageCount =
+    typeof hookConfig.messageCount === "number" ? hookConfig.messageCount : DEFAULT_MESSAGE_COUNT;
+  try {
+    // Read session content
+    const sessionContent = await getRecentSessionContent(sessionFile, messageCount);
+    if (!sessionContent?.trim()) {
+      log.debug("Session content is empty, skipping compilation");
+      return;
+    }
+    // Extract knowledge via LLM
+    const newKnowledge = await generateKnowledgeViaLLM(sessionContent, cfg);
+    if (!newKnowledge || newKnowledge.length === 0) {
+      log.debug("No new knowledge extracted", { sessionFile });
+      return;
+    }
+    // Read existing knowledge
+    const knowledgePath = path.join(workspaceDir, KNOWLEDGE_FILE);
+    const existing = await readExistingKnowledge(knowledgePath);
+    // Merge with deduplication
+    const merged = mergeKnowledge(existing, newKnowledge);
+    // Truncate to budget
+    const finalKnowledge = truncateToBudget(merged, maxEntries, maxChars);
+    // Write to workspace
+    await fs.mkdir(workspaceDir, { recursive: true });
+    await writeFileWithinRoot({
+      rootDir: workspaceDir,
+      relativePath: KNOWLEDGE_FILE,
+      data: finalKnowledge,
+      encoding: "utf-8",
+    });
+    const stats = {
+      newEntries: newKnowledge.length,
+      totalEntries: countEntries(finalKnowledge),
+      truncated: merged.length > finalKnowledge.length,
+    };
+    log.info("Knowledge compiled", stats);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log.error("Failed to compile knowledge", { error: message });
+  }
+};
+
+export default knowledgeCompilerHook;
+
+// === Helper functions ===
+async function readExistingKnowledge(filePath: string): Promise<string | null> {
+  try {
+    return await fs.readFile(filePath, "utf-8");
+  } catch {
+    return null;
+  }
+}
+function mergeKnowledge(existing: string | null, newKnowledge: KnowledgeEntry[]): string {
+  const lines: string[] = [];
+  const date = new Date().toISOString().split("T")[0];
+  lines.push("# Compiled Knowledge");
+  lines.push(`Auto-generated by knowledge-compiler hook. Date: ${date}`);
+  lines.push("");
+
+  // Extract existing entry texts for dedup (strip the "- [date] category: " prefix)
+  const seenTexts = new Set<string>();
+  const existingBodyLines: string[] = [];
+
+  if (existing) {
+    for (const line of existing.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith("Auto-generated")) {
+        continue;
+      }
+      existingBodyLines.push(line);
+      // Extract text from "- [YYYY-MM-DD] category: text" format
+      const match = trimmed.match(/^- \[\d{4}-\d{2}-\d{2}\] \w+: (.+)$/);
+      if (match) {
+        seenTexts.add(match[1].toLowerCase().trim());
+      }
+    }
+  }
+
+  // Carry over existing entries
+  if (existingBodyLines.length > 0) {
+    lines.push(...existingBodyLines);
+    lines.push("");
+  }
+
+  // Add new entries (deduped against existing text portions)
+  for (const entry of newKnowledge) {
+    const text = entry.text.toLowerCase().trim();
+    if (seenTexts.has(text)) {
+      continue;
+    }
+    seenTexts.add(text);
+    lines.push(`- [${date}] ${entry.category}: ${entry.text}`);
+    if (entry.reason) {
+      lines.push(`  - reason: ${entry.reason}`);
+    }
+    if (entry.files && entry.files.length > 0) {
+      lines.push(`  - files: ${entry.files.join(", ")}`);
+    }
+    if (entry.impact) {
+      lines.push(`  - impact: ${entry.impact}`);
+    }
+  }
+
+  return lines.join("\n");
+}
+function truncateToBudget(knowledge: string, maxEntries: number, maxChars: number): string {
+  if (knowledge.length <= maxChars) {
+    return knowledge;
+  }
+  // Truncate by removing oldest entries until within budget
+  const lines = knowledge.split("\n");
+  const headerEnd = lines.findIndex((l) => l.startsWith("- ["));
+  if (headerEnd === -1) {
+    return knowledge;
+  }
+  const header = lines.slice(0, headerEnd);
+  const bodyLines = lines.slice(headerEnd);
+  // Group into entries (entry line + continuation lines)
+  const entries: string[][] = [];
+  for (const line of bodyLines) {
+    if (line.startsWith("- [")) {
+      entries.push([line]);
+    } else if (entries.length > 0) {
+      entries[entries.length - 1].push(line);
+    }
+  }
+  // Keep most recent entries until within char budget
+  let kept = entries.slice(-maxEntries);
+  let result = [...header, ...kept.flat()].join("\n");
+  while (result.length > maxChars && kept.length > 1) {
+    kept = kept.slice(1);
+    result = [...header, ...kept.flat()].join("\n");
+  }
+  return result;
+}
+function countEntries(knowledge: string): number {
+  return knowledge.split("\n").filter((l) => l.startsWith("- [")).length;
+}
+async function generateKnowledgeViaLLM(
+  sessionContent: string,
+  cfg: OpenClawConfig,
+): Promise<KnowledgeEntry[] | null> {
+  if (!sessionContent?.trim()) {
+    return null;
+  }
+  const agentId = resolveDefaultAgentId(cfg);
+  const workspaceDir = resolveAgentWorkspaceDir(cfg, agentId);
+  if (!workspaceDir) {
+    log.debug("No workspace dir, skipping knowledge extraction");
+    return null;
+  }
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "knowledge-compiler-"));
+  const tempSessionFile = path.join(tempDir, "session.jsonl");
+  try {
+    await fs.writeFile(tempSessionFile, sessionContent, "utf-8");
+    const prompt = buildExtractionPrompt(sessionContent);
+    const modelRef = resolveAgentEffectiveModelPrimary(cfg, agentId);
+    const parsed = modelRef ? parseModelRef(modelRef, DEFAULT_PROVIDER) : null;
+    const provider = parsed?.provider ?? DEFAULT_PROVIDER;
+    const model = parsed?.model ?? DEFAULT_MODEL;
+    const result = await runEmbeddedPiAgent({
+      sessionId: `knowledge-compiler-${Date.now()}`,
+      sessionKey: "temp:knowledge-compiler",
+      sessionFile: tempSessionFile,
+      workspaceDir,
+      agentDir: workspaceDir,
+      config: cfg,
+      prompt,
+      provider,
+      model,
+      timeoutMs: DEFAULT_LLM_TIMEOUT,
+      runId: `knowledge-gen-${Date.now()}`,
+    });
+    if (result.payloads && result.payloads.length > 0) {
+      const text = result.payloads[0]?.text;
+      if (typeof text === "string" && text.trim()) {
+        return parseKnowledgeResponse(text);
+      }
+    }
+    return null;
+  } catch (err) {
+    log.error("Failed to generate knowledge via LLM", { error: String(err) });
+    return null;
+  } finally {
+    try {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    } catch {
+      // Ignore cleanup errors
+    }
+  }
+}
+function buildExtractionPrompt(sessionContent: string): string {
+  const truncated = sessionContent.length > 6000 ? sessionContent.slice(0, 6000) : sessionContent;
+  return `Analyze this conversation and extract knowledge. Focus on durable insights: patterns, decisions, lessons.
+Avoid code changes that are just temporary.
+- Only extract knowledge (not rewrite code)
+- Keep it concise (max ${DEFAULT_MAX_LLM_ENTRIES} entries)
+- Format as structured JSON
+
+Conversation:
+${truncated}
+
+Return ONLY valid JSON array, no other text. Schema:
+[{"date":"YYYY-MM-DD","category":"patterns|decisions|lessons","text":"...","reason":"optional","impact":"optional","files":["optional"],"technical":["optional"]]
+
+Example:
+[{"date":"2026-04-05","category":"patterns","text":"User prefers X pattern for Y","reason":"Stated in conversation"}]`;
+}
+function parseKnowledgeResponse(text: string): KnowledgeEntry[] | null {
+  try {
+    const cleaned = text
+      .replace(/^```json\s*/i, "")
+      .replace(/^```\s*/i, "")
+      .trim();
+    const match = cleaned.match(/\[[\s\S]*\]/);
+    if (!match) {
+      const trimmed = cleaned.replace(/^[^[].*/, "").trim();
+      return JSON.parse(trimmed);
+    }
+    return JSON.parse(cleaned);
+  } catch (err) {
+    log.debug("Failed to parse knowledge response", {
+      error: String(err),
+      text: text.slice(0, 200),
+    });
+    return null;
+  }
+}

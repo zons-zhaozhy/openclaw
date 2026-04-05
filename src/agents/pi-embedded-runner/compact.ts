@@ -973,6 +973,7 @@ export async function compactEmbeddedPiSessionDirect(
           summaryLength: typeof result.summary === "string" ? result.summary.length : undefined,
           tokensBefore: result.tokensBefore,
           firstKeptEntryId: result.firstKeptEntryId,
+          config: params.config,
         });
         // Truncate session file to remove compacted entries (#39953)
         if (params.config?.agents?.defaults?.compaction?.truncateAfterCompaction) {
