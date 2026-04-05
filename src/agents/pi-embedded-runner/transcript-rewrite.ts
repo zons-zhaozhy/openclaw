@@ -86,6 +86,9 @@ function appendBranchEntry(params: {
 /**
  * Safely rewrites transcript message entries on the active branch by branching
  * from the first rewritten message's parent and re-appending the suffix.
+ *
+ * Provides transaction protection: if the rewrite fails, attempts to restore
+ * the original branch head to avoid leaving the session in a partial state.
  */
 export function rewriteTranscriptEntriesInSessionManager(params: {
   sessionManager: SessionManagerLike;
@@ -155,36 +158,71 @@ export function rewriteTranscriptEntriesInSessionManager(params: {
     };
   }
 
-  if (!firstMatchedEntry.parentId) {
-    params.sessionManager.resetLeaf();
-  } else {
-    params.sessionManager.branch(firstMatchedEntry.parentId);
-  }
+  // Remember the original branch head for transaction rollback.
+  // If the rewrite fails, we'll try to restore this state.
+  const originalBranch = params.sessionManager.getBranch();
+  const originalHeadId =
+    originalBranch.length > 0 ? originalBranch[originalBranch.length - 1].id : null;
 
-  // Maintenance rewrites should preserve the exact requested history without
-  // re-running persistence hooks or size truncation on replayed messages.
-  const appendMessage = getRawSessionAppendMessage(params.sessionManager);
-  const rewrittenEntryIds = new Map<string, string>();
-  for (let index = matchedIndices[0]; index < branch.length; index++) {
-    const entry = branch[index];
-    const replacement = entry.type === "message" ? replacementsById.get(entry.id) : undefined;
-    const newEntryId =
-      replacement === undefined
-        ? appendBranchEntry({
-            sessionManager: params.sessionManager,
-            entry,
-            rewrittenEntryIds,
-            appendMessage,
-          })
-        : appendMessage(replacement as Parameters<typeof params.sessionManager.appendMessage>[0]);
-    rewrittenEntryIds.set(entry.id, newEntryId);
-  }
+  // Attempt the rewrite with transaction protection.
+  let rewrittenEntryIds: Map<string, string> | null = null;
 
-  return {
-    changed: true,
-    bytesFreed,
-    rewrittenEntries: matchedIndices.length,
-  };
+  try {
+    if (!firstMatchedEntry.parentId) {
+      params.sessionManager.resetLeaf();
+    } else {
+      params.sessionManager.branch(firstMatchedEntry.parentId);
+    }
+
+    // Maintenance rewrites should preserve the exact requested history without
+    // re-running persistence hooks or size truncation on replayed messages.
+    const appendMessage = getRawSessionAppendMessage(params.sessionManager);
+    rewrittenEntryIds = new Map<string, string>();
+    for (let index = matchedIndices[0]; index < branch.length; index++) {
+      const entry = branch[index];
+      const replacement = entry.type === "message" ? replacementsById.get(entry.id) : undefined;
+      const newEntryId =
+        replacement === undefined
+          ? appendBranchEntry({
+              sessionManager: params.sessionManager,
+              entry,
+              rewrittenEntryIds,
+              appendMessage,
+            })
+          : appendMessage(replacement as Parameters<typeof params.sessionManager.appendMessage>[0]);
+      rewrittenEntryIds.set(entry.id, newEntryId);
+    }
+
+    return {
+      changed: true,
+      bytesFreed,
+      rewrittenEntries: matchedIndices.length,
+    };
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    log.warn(
+      `[transcript-rewrite] rewrite failed, attempting rollback to original head: ${errMsg}`,
+    );
+
+    // Attempt rollback to restore the original branch head.
+    try {
+      if (originalHeadId) {
+        params.sessionManager.branch(originalHeadId);
+      } else {
+        params.sessionManager.resetLeaf();
+      }
+    } catch {
+      // Rollback failed - the session may be in an inconsistent state.
+      log.error(`[transcript-rewrite] rollback failed, session may be inconsistent`);
+    }
+
+    return {
+      changed: false,
+      bytesFreed: 0,
+      rewrittenEntries: 0,
+      reason: `rewrite failed: ${errMsg}`,
+    };
+  }
 }
 
 /**

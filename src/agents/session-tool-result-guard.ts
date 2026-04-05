@@ -195,9 +195,7 @@ export function installSessionToolResultGuard(
         allowedToolNames: opts?.allowedToolNames,
       });
       if (sanitized.length === 0) {
-        if (pendingState.shouldFlushForSanitizedDrop()) {
-          flushPendingToolResults();
-        }
+        pendingState.flushIfNeededForSanitizedDrop(flushPendingToolResults);
         return undefined;
       }
       nextMessage = sanitized[0];
@@ -245,13 +243,13 @@ export function installSessionToolResultGuard(
     // synthetic results (e.g. OpenAI) accumulate stale pending state when a user message
     // interrupts in-flight tool calls, leaving orphaned tool_use blocks in the transcript
     // that cause API 400 errors on subsequent requests.
-    if (pendingState.shouldFlushBeforeNonToolResult(nextRole, toolCalls.length)) {
-      flushPendingToolResults();
-    }
+    pendingState.flushIfNeededBeforeNonToolResult(
+      nextRole,
+      toolCalls.length,
+      flushPendingToolResults,
+    );
     // If new tool calls arrive while older ones are pending, flush the old ones first.
-    if (pendingState.shouldFlushBeforeNewToolCalls(toolCalls.length)) {
-      flushPendingToolResults();
-    }
+    pendingState.flushIfNeededBeforeNewToolCalls(toolCalls.length, flushPendingToolResults);
 
     const finalMessage = applyBeforeWriteHook(persistMessage(nextMessage));
     if (!finalMessage) {

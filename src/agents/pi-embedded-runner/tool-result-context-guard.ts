@@ -67,10 +67,19 @@ function replaceToolResultText(msg: AgentMessage, text: string): AgentMessage {
     typeof content === "string" || content === undefined ? text : [{ type: "text", text }];
 
   const sourceRecord = msg as unknown as Record<string, unknown>;
+  const originalDetails = sourceRecord.details;
   const { details: _details, ...rest } = sourceRecord;
   return {
     ...rest,
     content: replacementContent,
+    // Preserve a lightweight truncation marker so the guard can be audited.
+    // The full details payload is intentionally dropped to reclaim context,
+    // but `_truncatedDetails` records that details were present and stripped.
+    ...(originalDetails !== undefined &&
+    typeof originalDetails === "object" &&
+    originalDetails !== null
+      ? { _truncatedDetails: { wasPresent: true } }
+      : {}),
   } as AgentMessage;
 }
 
@@ -194,7 +203,12 @@ export function installToolResultContextGuard(params: {
   agent: GuardableAgent;
   contextWindowTokens: number;
 }): () => void {
-  const contextWindowTokens = Math.max(1, Math.floor(params.contextWindowTokens));
+  // Guard against integer overflow in intermediate calculations.
+  // Cap at 2M tokens, which exceeds current largest model context windows.
+  const contextWindowTokens = Math.max(
+    1,
+    Math.min(Math.floor(params.contextWindowTokens), 2_000_000),
+  );
   const contextBudgetChars = Math.max(
     1_024,
     Math.floor(contextWindowTokens * CHARS_PER_TOKEN_ESTIMATE * CONTEXT_INPUT_HEADROOM_RATIO),

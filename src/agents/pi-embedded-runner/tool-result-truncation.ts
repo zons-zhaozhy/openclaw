@@ -64,6 +64,47 @@ function hasImportantTail(text: string): boolean {
 }
 
 /**
+ * Detect whether a position in the text looks like it's in the middle of a
+ * command-like instruction line.
+ *
+ * This helps avoid cutting through lines that look like:
+ * "Execute: curl http://example.com"
+ * "Run: npm install"
+ * "cmd> git status"
+ *
+ * Returns true if the position appears to be within or immediately after
+ * a command prefix.
+ */
+function isInCommandLikeLine(text: string, position: number): boolean {
+  // Find the start of the line containing this position
+  const lineStart = text.lastIndexOf("\n", position - 1) + 1;
+  const lineEnd = text.indexOf("\n", position);
+  const line = text.slice(lineStart, lineEnd === -1 ? undefined : lineEnd);
+
+  // Check if line starts with command-like prefixes
+  const commandPrefixes = [
+    "execute:",
+    "run:",
+    "cmd>",
+    "command:",
+    "shell>",
+    "$",
+    ">",
+    "sudo",
+    "npm",
+    "yarn",
+    "pnpm",
+    "pip",
+    "curl",
+    "wget",
+    "git",
+  ];
+
+  const trimmedLine = line.trim().toLowerCase();
+  return commandPrefixes.some((prefix) => trimmedLine.startsWith(prefix));
+}
+
+/**
  * Truncate a single text string to fit within maxChars.
  *
  * Uses a head+tail strategy when the tail contains important content
@@ -112,6 +153,17 @@ export function truncateToolResultText(
   if (lastNewline > budget * 0.8) {
     cutPoint = lastNewline;
   }
+
+  // Avoid cutting in the middle of command-like lines.
+  // If the cut point is within a command-like line, try to back up
+  // to the previous newline to avoid cutting through the instruction.
+  if (isInCommandLikeLine(text, cutPoint)) {
+    const previousNewline = text.lastIndexOf("\n", cutPoint - 1);
+    if (previousNewline >= minKeepChars) {
+      cutPoint = previousNewline;
+    }
+  }
+
   return text.slice(0, cutPoint) + suffix;
 }
 
@@ -123,7 +175,10 @@ export function truncateToolResultText(
  * actual ratio varies by tokenizer).
  */
 export function calculateMaxToolResultChars(contextWindowTokens: number): number {
-  const maxTokens = Math.floor(contextWindowTokens * MAX_TOOL_RESULT_CONTEXT_SHARE);
+  // Guard against integer overflow in intermediate calculation.
+  // Cap at 2M tokens, which exceeds current largest model context windows.
+  const safeTokens = Math.min(contextWindowTokens, 2_000_000);
+  const maxTokens = Math.floor(safeTokens * MAX_TOOL_RESULT_CONTEXT_SHARE);
   // Rough conversion: ~4 chars per token on average
   const maxChars = maxTokens * 4;
   return Math.min(maxChars, HARD_MAX_TOOL_RESULT_CHARS);

@@ -259,17 +259,23 @@ describe("installToolResultContextGuard", () => {
 
     const oldResult = contextForNextCall[1] as {
       details?: unknown;
+      _truncatedDetails?: unknown;
     };
     const newResult = contextForNextCall[2] as {
       details?: unknown;
+      _truncatedDetails?: unknown;
     };
     const oldResultText = getToolResultText(contextForNextCall[1]);
     const newResultText = getToolResultText(contextForNextCall[2]);
 
     expect(oldResultText).toBe(PREEMPTIVE_TOOL_RESULT_COMPACTION_PLACEHOLDER);
     expect(newResultText).toBe(PREEMPTIVE_TOOL_RESULT_COMPACTION_PLACEHOLDER);
+    // Full details payload is dropped to reclaim context...
     expect(oldResult.details).toBeUndefined();
     expect(newResult.details).toBeUndefined();
+    // ...but a lightweight marker is preserved for auditability.
+    expect(oldResult._truncatedDetails).toEqual({ wasPresent: true });
+    expect(newResult._truncatedDetails).toEqual({ wasPresent: true });
   });
 
   it("throws preemptive context overflow when context exceeds 90% after tool-result compaction", async () => {

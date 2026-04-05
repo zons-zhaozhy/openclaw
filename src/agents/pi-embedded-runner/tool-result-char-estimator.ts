@@ -21,11 +21,18 @@ function estimateUnknownChars(value: unknown): number {
   if (value === undefined) {
     return 0;
   }
+  // For objects, compute a floor estimate from enumerable keys before attempting
+  // JSON.stringify, so cyclic references (which throw) don't cause the estimator
+  // to return a dangerously low fallback.
+  const floorEstimate =
+    value !== null && typeof value === "object" ? Object.keys(value).length * 64 : 256;
   try {
     const serialized = JSON.stringify(value);
-    return typeof serialized === "string" ? serialized.length : 0;
+    const serializedLen = typeof serialized === "string" ? serialized.length : 0;
+    return Math.max(floorEstimate, serializedLen);
   } catch {
-    return 256;
+    // Cyclic reference or other serialization error — use the floor estimate.
+    return Math.max(floorEstimate, 512);
   }
 }
 
