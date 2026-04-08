@@ -500,8 +500,12 @@ export async function runTui(opts: TuiOptions) {
     if (totalSeconds < 60) {
       return `${totalSeconds}s`;
     }
-    const minutes = Math.floor(totalSeconds / 60);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
     const seconds = totalSeconds % 60;
+    if (hours > 0) {
+      return `${hours}h ${minutes}m`;
+    }
     return `${minutes}m ${seconds}s`;
   };
 
@@ -610,6 +614,7 @@ export async function runTui(opts: TuiOptions) {
 
   const renderStatus = () => {
     const isBusy = busyStates.has(activityStatus);
+    const isError = activityStatus === "error" || activityStatus.startsWith("error:");
     if (isBusy) {
       if (!statusStartedAt || lastActivityStatus !== activityStatus) {
         statusStartedAt = Date.now();
@@ -623,6 +628,21 @@ export async function runTui(opts: TuiOptions) {
         startStatusTimer();
       }
       updateBusyStatusMessage();
+    } else if (isError) {
+      // Keep the timer running briefly for error state so the user sees how long
+      // the failed operation ran. Stop the animated loader; show static text instead.
+      stopWaitingTimer();
+      statusLoader?.stop();
+      statusLoader = null;
+      ensureStatusText();
+      const elapsed = statusStartedAt ? formatElapsed(statusStartedAt) : "";
+      const errorLabel = activityStatus;
+      const text = elapsed
+        ? `${connectionStatus} | ${errorLabel} (${elapsed})`
+        : `${connectionStatus} | ${errorLabel}`;
+      statusText?.setText(theme.dim(text));
+      statusStartedAt = null;
+      stopStatusTimer();
     } else {
       statusStartedAt = null;
       stopStatusTimer();

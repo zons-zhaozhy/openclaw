@@ -43,6 +43,28 @@ type EventHandlerContext = {
   clearLocalBtwRunIds?: () => void;
 };
 
+/**
+ * Extract a short, human-readable error summary for the status line.
+ * Keeps the status bar concise (under ~80 chars) while being informative.
+ */
+const summarizeError = (raw?: string): string => {
+  if (!raw) {
+    return "unknown error";
+  }
+  // Strip common prefixes
+  const stripped = raw
+    .replace(/^⚠️\s*/, "")
+    .replace(/^Embedded agent failed before reply:\s*/i, "")
+    .replace(/^FailoverError:\s*/i, "")
+    .replace(/^Error:\s*/i, "")
+    .trim();
+  // Truncate to keep status line readable
+  if (stripped.length > 80) {
+    return `${stripped.slice(0, 77)}...`;
+  }
+  return stripped || "unknown error";
+};
+
 export function createEventHandlers(context: EventHandlerContext) {
   const {
     chatLog,
@@ -134,12 +156,17 @@ export function createEventHandlers(context: EventHandlerContext) {
     runId: string;
     wasActiveRun: boolean;
     status: "idle" | "error";
+    errorDetail?: string;
   }) => {
     noteFinalizedRun(params.runId);
     clearActiveRunIfMatch(params.runId);
     flushPendingHistoryRefreshIfIdle();
     if (params.wasActiveRun) {
-      setActivityStatus(params.status);
+      if (params.errorDetail && params.status === "error") {
+        setActivityStatus(`error: ${params.errorDetail}`);
+      } else {
+        setActivityStatus(params.status);
+      }
     }
     void refreshSessionInfo?.();
   };
@@ -148,13 +175,18 @@ export function createEventHandlers(context: EventHandlerContext) {
     runId: string;
     wasActiveRun: boolean;
     status: "aborted" | "error";
+    errorDetail?: string;
   }) => {
     streamAssembler.drop(params.runId);
     sessionRuns.delete(params.runId);
     clearActiveRunIfMatch(params.runId);
     flushPendingHistoryRefreshIfIdle();
     if (params.wasActiveRun) {
-      setActivityStatus(params.status);
+      if (params.errorDetail && params.status === "error") {
+        setActivityStatus(`error: ${params.errorDetail}`);
+      } else {
+        setActivityStatus(params.status);
+      }
     }
     void refreshSessionInfo?.();
   };
@@ -297,10 +329,12 @@ export function createEventHandlers(context: EventHandlerContext) {
       } else {
         chatLog.finalizeAssistant(finalText, evt.runId);
       }
+      const errorDetail = stopReason === "error" ? summarizeError(evt.errorMessage) : undefined;
       finalizeRun({
         runId: evt.runId,
         wasActiveRun,
         status: stopReason === "error" ? "error" : "idle",
+        errorDetail,
       });
     }
     if (evt.state === "aborted") {
@@ -314,7 +348,12 @@ export function createEventHandlers(context: EventHandlerContext) {
       forgetLocalBtwRunId?.(evt.runId);
       const wasActiveRun = state.activeChatRunId === evt.runId;
       chatLog.addSystem(`run error: ${evt.errorMessage ?? "unknown"}`);
-      terminateRun({ runId: evt.runId, wasActiveRun, status: "error" });
+      terminateRun({
+        runId: evt.runId,
+        wasActiveRun,
+        status: "error",
+        errorDetail: summarizeError(evt.errorMessage),
+      });
       maybeRefreshHistoryForRun(evt.runId);
     }
     tui.requestRender();
@@ -381,7 +420,8 @@ export function createEventHandlers(context: EventHandlerContext) {
         setActivityStatus("idle");
       }
       if (phase === "error") {
-        setActivityStatus("error");
+        const lifecycleError = typeof evt.data?.error === "string" ? evt.data.error : undefined;
+        setActivityStatus(lifecycleError ? `error: ${summarizeError(lifecycleError)}` : "error");
       }
       tui.requestRender();
     }
