@@ -369,23 +369,25 @@ function convertAnthropicTools(tools: Context["tools"], isOAuthToken: boolean) {
   }));
 }
 
-function mapStopReason(reason: string | undefined): string {
+function mapStopReason(reason: string | undefined): { mapped: string; raw?: string } {
   switch (reason) {
     case "end_turn":
-      return "stop";
+      return { mapped: "stop" };
     case "max_tokens":
-      return "length";
+      return { mapped: "length" };
     case "tool_use":
-      return "toolUse";
+      return { mapped: "toolUse" };
     case "pause_turn":
-      return "stop";
+      return { mapped: "stop" };
     case "refusal":
     case "sensitive":
-      return "error";
+      return { mapped: "error", raw: reason };
     case "stop_sequence":
-      return "stop";
+      return { mapped: "stop" };
     default:
-      throw new Error(`Unhandled stop reason: ${String(reason)}`);
+      // Provider-specific stop reasons (e.g. ZhipuAI mid-inference errors)
+      // map to "error" so the failover system can classify them.
+      return { mapped: "error", raw: reason };
   }
 }
 
@@ -823,7 +825,11 @@ export function createAnthropicMessagesTransportStreamFn(): StreamFn {
             const delta = event.delta as { stop_reason?: string } | undefined;
             const usage = event.usage as Record<string, unknown> | undefined;
             if (delta?.stop_reason) {
-              output.stopReason = mapStopReason(delta.stop_reason);
+              const result = mapStopReason(delta.stop_reason);
+              output.stopReason = result.mapped;
+              if (result.mapped === "error" && result.raw) {
+                output.errorMessage = `stop_reason: ${result.raw}`;
+              }
             }
             if (typeof usage?.input_tokens === "number") {
               output.usage.input = usage.input_tokens;

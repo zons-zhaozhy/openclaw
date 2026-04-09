@@ -42,9 +42,9 @@ const COMMON_AUTH_ERROR_PATTERNS = [
 
 const ZAI_BILLING_CODE_1311_RE = /"code"\s*:\s*1311\b/;
 const ZAI_AUTH_CODE_1113_RE = /"code"\s*:\s*1113\b/;
-// ZhipuAI rate-limit codes: 1302 (concurrent), 1303 (frequency), 1305 (traffic limit)
-const ZAI_RATE_LIMIT_CODE_RE = /"code"\s*:\s*13(?:0[2-5]|08|1[0-3])\b/;
-// ZhipuAI billing codes: 1304 (daily limit), 1308 (usage cap), 1309 (plan expired), 1310 (periodic cap)
+// ZhipuAI rate-limit codes: 1302 (concurrent), 1303 (frequency), 1305 (traffic limit), 1312, 1313
+const ZAI_RATE_LIMIT_CODE_RE = /"code"\s*:\s*(?:130[235]|131[23])\b/;
+// ZhipuAI billing codes: 1304 (daily limit), 1308 (usage cap), 1309 (plan expired), 1310 (periodic cap), 1311 (model not on plan)
 const ZAI_BILLING_CODE_RE = /"code"\s*:\s*(?:1304|1308|1309|131[01])\b/;
 
 const ZAI_AUTH_ERROR_PATTERNS = [
