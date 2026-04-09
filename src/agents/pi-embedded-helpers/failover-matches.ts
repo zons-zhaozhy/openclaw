@@ -42,10 +42,17 @@ const COMMON_AUTH_ERROR_PATTERNS = [
 
 const ZAI_BILLING_CODE_1311_RE = /"code"\s*:\s*1311\b/;
 const ZAI_AUTH_CODE_1113_RE = /"code"\s*:\s*1113\b/;
+// ZhipuAI rate-limit codes: 1302 (concurrent), 1303 (frequency), 1305 (traffic limit)
+const ZAI_RATE_LIMIT_CODE_RE = /"code"\s*:\s*13(?:0[2-5]|08|1[0-3])\b/;
+// ZhipuAI billing codes: 1304 (daily limit), 1308 (usage cap), 1309 (plan expired), 1310 (periodic cap)
+const ZAI_BILLING_CODE_RE = /"code"\s*:\s*(?:1304|1308|1309|131[01])\b/;
 
 const ZAI_AUTH_ERROR_PATTERNS = [
   // Z.ai: error 1113 = wrong endpoint or invalid credentials (#48988)
   ZAI_AUTH_CODE_1113_RE,
+  // ZhipuAI: account locked / violation
+  /"code"\s*:\s*(?:1112|1121)\b/,
+  "账户已被锁定",
 ] as const satisfies readonly ErrorPattern[];
 
 const ERROR_PATTERNS = {
@@ -66,9 +73,14 @@ const ERROR_PATTERNS = {
     /\btpm\b/i,
     "tokens per minute",
     "tokens per day",
-    // 智谱 (ZhipuAI / bigmodel.cn) Chinese rate-limit messages
+    // 智谱 (ZhipuAI / bigmodel.cn) rate-limit error codes & Chinese messages
+    ZAI_RATE_LIMIT_CODE_RE,
+    "并发数过高",
+    "频率过高",
     "访问量过大",
-    "稍后再试",
+    "流量限制",
+    "公平使用策略",
+    "请求频率",
   ],
   overloaded: [
     /overloaded_error|"type"\s*:\s*"overloaded_error"/i,
@@ -138,6 +150,12 @@ const ERROR_PATTERNS = {
     /extra usage is required(?: for long context requests)?/i,
     // Z.ai: error 1311 = model not included in current subscription plan (#48988)
     ZAI_BILLING_CODE_1311_RE,
+    // 智谱 (ZhipuAI / bigmodel.cn) billing error codes & Chinese messages
+    ZAI_BILLING_CODE_RE,
+    "调用次数限额",
+    "使用上限",
+    "套餐已到期",
+    "套餐暂未开放",
   ],
   authPermanent: HIGH_CONFIDENCE_AUTH_PERMANENT_PATTERNS,
   auth: [

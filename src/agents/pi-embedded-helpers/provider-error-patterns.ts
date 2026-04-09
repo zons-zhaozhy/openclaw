@@ -57,10 +57,19 @@ export const PROVIDER_SPECIFIC_PATTERNS: readonly ProviderErrorPattern[] = [
     test: /\bworkers_ai\b.*\bquota limit exceeded\b/i,
     reason: "rate_limit",
   },
-  // 智谱 (ZhipuAI / bigmodel.cn) rate-limit error codes: 1302 (rate exceeded), 1305 (overloaded)
+  // 智谱 (ZhipuAI / bigmodel.cn) rate-limit error codes:
+  //   1302 = concurrent limit, 1303 = frequency limit, 1305 = traffic limit
+  //   1312 = overloaded, 1313 = fair use policy throttled
   {
-    test: /\bLLM error (?:1302|1305)\b/,
+    test: /\bLLM error (?:1302|1303|1305|1312|1313)\b/,
     reason: "rate_limit",
+  },
+  // 智谱 (ZhipuAI / bigmodel.cn) billing / subscription error codes:
+  //   1304 = daily limit, 1308 = usage cap, 1309 = plan expired, 1310 = periodic cap
+  //   1311 = model not in plan
+  {
+    test: /\bLLM error (?:1304|1308|1309|131[01])\b/,
+    reason: "billing",
   },
   {
     test: /\bmodelnotreadyexception\b/i,
