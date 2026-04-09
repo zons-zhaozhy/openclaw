@@ -66,6 +66,9 @@ const ERROR_PATTERNS = {
     /\btpm\b/i,
     "tokens per minute",
     "tokens per day",
+    // 智谱 (ZhipuAI / bigmodel.cn) Chinese rate-limit messages
+    "访问量过大",
+    "稍后再试",
   ],
   overloaded: [
     /overloaded_error|"type"\s*:\s*"overloaded_error"/i,

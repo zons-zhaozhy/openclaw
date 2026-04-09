@@ -57,6 +57,11 @@ export const PROVIDER_SPECIFIC_PATTERNS: readonly ProviderErrorPattern[] = [
     test: /\bworkers_ai\b.*\bquota limit exceeded\b/i,
     reason: "rate_limit",
   },
+  // 智谱 (ZhipuAI / bigmodel.cn) rate-limit error codes: 1302 (rate exceeded), 1305 (overloaded)
+  {
+    test: /\bLLM error (?:1302|1305)\b/,
+    reason: "rate_limit",
+  },
   {
     test: /\bmodelnotreadyexception\b/i,
     reason: "overloaded",
