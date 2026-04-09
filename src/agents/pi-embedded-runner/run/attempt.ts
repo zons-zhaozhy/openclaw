@@ -829,6 +829,7 @@ export async function runEmbeddedAttempt(
         inputProvenance: params.inputProvenance,
         allowSyntheticToolResults: transcriptPolicy.allowSyntheticToolResults,
         allowedToolNames,
+        contextWindowTokens: params.model.contextWindow,
       });
       trackSessionManagerAccess(params.sessionFile);
 

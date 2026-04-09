@@ -149,6 +149,9 @@ export const AgentDefaultsSchema = z
           .strict()
           .optional(),
         notifyUser: z.boolean().optional(),
+        maxSummaryChars: z.number().int().positive().optional(),
+        proactiveTurnInterval: z.number().int().nonnegative().optional(),
+        proactiveThresholdRatio: z.number().min(0.1).max(1.0).optional(),
       })
       .strict()
       .optional(),

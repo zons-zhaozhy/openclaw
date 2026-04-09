@@ -148,6 +148,20 @@ import type { EmbeddedPiCompactResult } from "./types.js";
 import { mapThinkingLevel } from "./utils.js";
 import { flushPendingToolResultsAfterIdle } from "./wait-for-idle-before-flush.js";
 
+const SUMMARY_TRUNCATION_MARKER = "\n\n[Summary truncated to fit context budget]";
+
+/**
+ * Truncate a compaction summary to a maximum character length if configured.
+ * Returns the truncated summary with a marker, or the original if within limits.
+ */
+function applySummarySizeLimit(summary: string, maxSummaryChars: number | undefined): string {
+  if (!maxSummaryChars || maxSummaryChars <= 0 || summary.length <= maxSummaryChars) {
+    return summary;
+  }
+  const budget = maxSummaryChars - SUMMARY_TRUNCATION_MARKER.length;
+  return summary.slice(0, Math.max(0, budget)) + SUMMARY_TRUNCATION_MARKER;
+}
+
 export type CompactEmbeddedPiSessionParams = {
   sessionId: string;
   runId?: string;
@@ -186,7 +200,7 @@ export type CompactEmbeddedPiSessionParams = {
   customInstructions?: string;
   tokenBudget?: number;
   force?: boolean;
-  trigger?: "budget" | "overflow" | "manual";
+  trigger?: "budget" | "overflow" | "manual" | "proactive";
   diagId?: string;
   attempt?: number;
   maxAttempts?: number;
@@ -806,6 +820,7 @@ export async function compactEmbeddedPiSessionDirect(
         sessionKey: params.sessionKey,
         allowSyntheticToolResults: transcriptPolicy.allowSyntheticToolResults,
         allowedToolNames,
+        contextWindowTokens: ctxInfo.tokens,
       });
       checkpointSnapshot = captureCompactionCheckpointSnapshot({
         sessionManager,
@@ -1151,11 +1166,12 @@ export async function compactEmbeddedPiSessionDirect(
               });
             }
           }
+          const maxSummaryChars = params.config?.agents?.defaults?.compaction?.maxSummaryChars;
           return {
             ok: true,
             compacted: true,
             result: {
-              summary: result.summary,
+              summary: applySummarySizeLimit(result.summary ?? "", maxSummaryChars),
               firstKeptEntryId: effectiveFirstKeptEntryId,
               tokensBefore: observedTokenCount ?? result.tokensBefore,
               tokensAfter,
@@ -1422,13 +1438,14 @@ export async function compactEmbeddedPiSession(
             });
           }
         }
+        const maxSummaryChars = params.config?.agents?.defaults?.compaction?.maxSummaryChars;
         return {
           ok: result.ok,
           compacted: result.compacted,
           reason: result.reason,
           result: result.result
             ? {
-                summary: result.result.summary ?? "",
+                summary: applySummarySizeLimit(result.result.summary ?? "", maxSummaryChars),
                 firstKeptEntryId: result.result.firstKeptEntryId ?? "",
                 tokensBefore: result.result.tokensBefore,
                 tokensAfter: result.result.tokensAfter,

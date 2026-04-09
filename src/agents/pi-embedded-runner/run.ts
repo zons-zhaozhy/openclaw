@@ -396,6 +396,7 @@ export async function runEmbeddedPiAgent(
       let lastRunPromptUsage: ReturnType<typeof normalizeUsage> | undefined;
       let autoCompactionCount = 0;
       let runLoopIterations = 0;
+      let userTurnCount = 0;
       let overloadProfileRotations = 0;
       let planningOnlyRetryAttempts = 0;
       let lastRetryFailoverReason: FailoverReason | null = null;
@@ -570,6 +571,86 @@ export async function runEmbeddedPiAgent(
             });
           }
           runLoopIterations += 1;
+          // Track user turns: first iteration per run() call is a new user turn
+          if (runLoopIterations === 1) {
+            userTurnCount += 1;
+          }
+
+          // ── Proactive compaction (turn-based) ───────────────────────────
+          // After every N user turns, check context usage and compact if over
+          // the threshold. This prevents death spirals in small context windows
+          // where overflow compaction is too late.
+          const proactiveInterval =
+            params.config?.agents?.defaults?.compaction?.proactiveTurnInterval ?? 0;
+          if (
+            proactiveInterval > 0 &&
+            userTurnCount > 1 &&
+            userTurnCount % proactiveInterval === 0
+          ) {
+            const thresholdRatio =
+              params.config?.agents?.defaults?.compaction?.proactiveThresholdRatio ?? 0.5;
+            const lastPromptTokens = derivePromptTokens(lastRunPromptUsage);
+            if (lastPromptTokens != null && ctxInfo.tokens > 0) {
+              const usageRatio = lastPromptTokens / ctxInfo.tokens;
+              if (usageRatio > thresholdRatio) {
+                log.info(
+                  `[proactive-compaction] context at ${Math.round(usageRatio * 100)}% ` +
+                    `after ${userTurnCount} user turns (threshold=${Math.round(thresholdRatio * 100)}%); ` +
+                    `triggering proactive compaction for ${provider}/${modelId}`,
+                );
+                try {
+                  const proactiveRuntimeContext = {
+                    ...buildEmbeddedCompactionRuntimeContext({
+                      sessionKey: params.sessionKey,
+                      messageChannel: params.messageChannel,
+                      messageProvider: params.messageProvider,
+                      agentAccountId: params.agentAccountId,
+                      currentChannelId: params.currentChannelId,
+                      currentThreadTs: params.currentThreadTs,
+                      currentMessageId: params.currentMessageId,
+                      authProfileId: lastProfileId,
+                      workspaceDir: resolvedWorkspace,
+                      agentDir,
+                      config: params.config,
+                      skillsSnapshot: params.skillsSnapshot,
+                      senderIsOwner: params.senderIsOwner,
+                      senderId: params.senderId,
+                      provider,
+                      modelId,
+                      thinkLevel,
+                      reasoningLevel: params.reasoningLevel,
+                      bashElevated: params.bashElevated,
+                      extraSystemPrompt: params.extraSystemPrompt,
+                      ownerNumbers: params.ownerNumbers,
+                    }),
+                    runId: params.runId,
+                    trigger: "proactive" as const,
+                  };
+                  const proactiveResult = await contextEngine.compact({
+                    sessionId: params.sessionId,
+                    sessionKey: params.sessionKey,
+                    sessionFile: params.sessionFile,
+                    tokenBudget: ctxInfo.tokens,
+                    currentTokenCount: lastPromptTokens,
+                    compactionTarget: "budget",
+                    runtimeContext: proactiveRuntimeContext,
+                  });
+                  if (proactiveResult.ok && proactiveResult.compacted) {
+                    autoCompactionCount += 1;
+                    log.info(
+                      `[proactive-compaction] succeeded for ${provider}/${modelId}; ` +
+                        `context reduced from ${lastPromptTokens} tokens`,
+                    );
+                  }
+                } catch (proactiveErr) {
+                  log.warn(
+                    `[proactive-compaction] failed for ${provider}/${modelId}: ${String(proactiveErr)}`,
+                  );
+                }
+              }
+            }
+          }
+
           const runtimeAuthRetry = authRetryPending;
           authRetryPending = false;
           attemptedThinking.add(thinkLevel);

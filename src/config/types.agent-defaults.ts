@@ -400,6 +400,25 @@ export type AgentCompactionConfig = {
    * Default: false (silent by default).
    */
   notifyUser?: boolean;
+  /**
+   * Maximum character length for a compaction summary. When a summary exceeds
+   * this limit, it is truncated with a marker. Prevents summary bloat from
+   * dominating the context window over many compaction cycles.
+   * Default: undefined (no limit). Recommended: 8000 for small context windows.
+   */
+  maxSummaryChars?: number;
+  /**
+   * Proactive compaction: check context usage after every N user turns.
+   * When context exceeds proactiveThresholdRatio, compact before the next LLM call.
+   * Set to 0 to disable. Default: 0 (disabled).
+   */
+  proactiveTurnInterval?: number;
+  /**
+   * Context usage ratio (0.1-1.0) that triggers proactive compaction.
+   * Only effective when proactiveTurnInterval > 0.
+   * Default: 0.5 (compact when context is 50% full).
+   */
+  proactiveThresholdRatio?: number;
 };
 
 export type AgentCompactionMemoryFlushConfig = {

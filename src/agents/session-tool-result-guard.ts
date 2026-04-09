@@ -24,11 +24,14 @@ import { extractToolCallsFromAssistant, extractToolResultId } from "./tool-call-
  * Returns the original message if under the limit, or a new message with
  * truncated text blocks otherwise.
  */
-function capToolResultSize(msg: AgentMessage): AgentMessage {
+function capToolResultSize(
+  msg: AgentMessage,
+  maxChars: number = DEFAULT_MAX_LIVE_TOOL_RESULT_CHARS,
+): AgentMessage {
   if ((msg as { role?: string }).role !== "toolResult") {
     return msg;
   }
-  return truncateToolResultMessage(msg, DEFAULT_MAX_LIVE_TOOL_RESULT_CHARS, {
+  return truncateToolResultMessage(msg, maxChars, {
     suffix: (truncatedChars) => formatContextLimitTruncationNotice(truncatedChars),
     minKeepChars: 2_000,
   });
@@ -99,6 +102,12 @@ export function installSessionToolResultGuard(
     beforeMessageWriteHook?: (
       event: PluginHookBeforeMessageWriteEvent,
     ) => PluginHookBeforeMessageWriteResult | undefined;
+    /**
+     * Maximum characters for a single tool result persisted to the session file.
+     * When unset, defaults to DEFAULT_MAX_LIVE_TOOL_RESULT_CHARS (40K).
+     * Use calculateMaxToolResultChars(contextWindowTokens) for adaptive limits.
+     */
+    maxToolResultChars?: number;
   },
 ): {
   flushPendingToolResults: () => void;
@@ -194,7 +203,10 @@ export function installSessionToolResultGuard(
       const normalizedToolResult = normalizePersistedToolResultName(nextMessage, toolName);
       // Apply hard size cap before persistence to prevent oversized tool results
       // from consuming the entire context window on subsequent LLM calls.
-      const capped = capToolResultSize(persistMessage(normalizedToolResult));
+      const capped = capToolResultSize(
+        persistMessage(normalizedToolResult),
+        opts?.maxToolResultChars,
+      );
       const persisted = applyBeforeWriteHook(
         persistToolResult(capped, {
           toolCallId: id ?? undefined,
