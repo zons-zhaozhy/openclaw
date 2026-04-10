@@ -32,7 +32,28 @@ export function createEmbeddedPiSessionEventHandler(ctx: EmbeddedPiSubscribeCont
       try {
         return handler();
       } catch (err) {
-        ctx.log.debug(`${evt.type} handler failed: ${String(err)}`);
+        ctx.log.warn(`${evt.type} handler failed: ${String(err)}`);
+        // If a lifecycle-end handler fails, the run will never finalize on its own.
+        // Emit an error event so downstream consumers (TUI) can recover.
+        if (
+          evt.type === "lifecycle" &&
+          "phase" in evt &&
+          (evt.phase === "end" || evt.phase === "error")
+        ) {
+          try {
+            void ctx.params.onAgentEvent?.({
+              stream: "lifecycle",
+              data: {
+                type: "lifecycle",
+                phase: "error",
+                runId: "runId" in evt ? (evt.runId as string) : ctx.params.runId,
+                error: err instanceof Error ? err.message : String(err),
+              },
+            });
+          } catch {
+            // Secondary emit failure — nothing more we can do
+          }
+        }
         return;
       }
     };
@@ -44,7 +65,7 @@ export function createEmbeddedPiSessionEventHandler(ctx: EmbeddedPiSubscribeCont
       }
       const task = result
         .catch((err) => {
-          ctx.log.debug(`${evt.type} handler failed: ${String(err)}`);
+          ctx.log.warn(`${evt.type} handler failed (async): ${String(err)}`);
         })
         .finally(() => {
           if (pendingEventChain === task) {
@@ -60,7 +81,7 @@ export function createEmbeddedPiSessionEventHandler(ctx: EmbeddedPiSubscribeCont
     const task = pendingEventChain
       .then(() => run())
       .catch((err) => {
-        ctx.log.debug(`${evt.type} handler failed: ${String(err)}`);
+        ctx.log.warn(`${evt.type} handler failed (chained): ${String(err)}`);
       })
       .finally(() => {
         if (pendingEventChain === task) {

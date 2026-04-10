@@ -110,10 +110,16 @@ export function createGatewayBroadcaster(params: { clients: Set<GatewayWsClient>
       }
       const slow = c.socket.bufferedAmount > MAX_BUFFERED_BYTES;
       if (slow && opts?.dropIfSlow) {
+        if (shouldLogWs()) {
+          logWs("out", "drop", { event, connId: c.connId, reason: "slow consumer (dropIfSlow)" });
+        }
         continue;
       }
       if (slow) {
         try {
+          if (shouldLogWs()) {
+            logWs("out", "close", { event, connId: c.connId, reason: "slow consumer" });
+          }
           c.socket.close(1008, "slow consumer");
         } catch {
           /* ignore */
@@ -122,8 +128,10 @@ export function createGatewayBroadcaster(params: { clients: Set<GatewayWsClient>
       }
       try {
         c.socket.send(frame);
-      } catch {
-        /* ignore */
+      } catch (sendErr) {
+        if (shouldLogWs()) {
+          logWs("out", "error", { event, connId: c.connId, error: String(sendErr) });
+        }
       }
     }
   };

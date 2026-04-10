@@ -24,12 +24,6 @@ const makeFile = (overrides: Partial<WorkspaceBootstrapFile>): WorkspaceBootstra
   ...overrides,
 });
 
-const createLargeBootstrapFiles = (): WorkspaceBootstrapFile[] => [
-  makeFile({ name: "AGENTS.md", content: "a".repeat(10_000) }),
-  makeFile({ name: "SOUL.md", path: "/tmp/SOUL.md", content: "b".repeat(10_000) }),
-  makeFile({ name: "USER.md", path: "/tmp/USER.md", content: "c".repeat(10_000) }),
-];
-
 describe("ensureSessionHeader", () => {
   it("creates transcript files with restrictive permissions", async () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-session-header-"));

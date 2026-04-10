@@ -245,6 +245,52 @@ export async function runTui(opts: TuiOptions) {
   let statusStartedAt: number | null = null;
   let lastActivityStatus = activityStatus;
 
+  /**
+   * Stall detection: if the TUI stays in a busy state (waiting/streaming)
+   * for too long without receiving any events, show a warning to the user.
+   */
+  const ACTIVITY_STALL_WARNING_MS = 120_000; // 2 minutes
+  const ACTIVITY_STALL_ABORT_MS = 300_000; // 5 minutes — force idle
+  let stallCheckTimer: NodeJS.Timeout | null = null;
+  let stallWarningShown = false;
+
+  const startStallCheck = () => {
+    stopStallCheck();
+    stallWarningShown = false;
+    stallCheckTimer = setInterval(() => {
+      if (!activeChatRunId || !busyStates.has(activityStatus)) {
+        stopStallCheck();
+        return;
+      }
+      if (!statusStartedAt) {
+        return;
+      }
+      const elapsed = Date.now() - statusStartedAt;
+      if (elapsed >= ACTIVITY_STALL_ABORT_MS) {
+        chatLog.addSystem(
+          `⏱ Agent has been ${activityStatus} for ${Math.round(elapsed / 60_000)} minutes with no response — clearing run. The agent may still be working on the server.`,
+        );
+        activeChatRunId = null;
+        pendingOptimisticUserMessage = false;
+        setActivityStatus("idle");
+        stopStallCheck();
+        tui.requestRender();
+      } else if (elapsed >= ACTIVITY_STALL_WARNING_MS && !stallWarningShown) {
+        stallWarningShown = true;
+        chatLog.addSystem(
+          `⏱ Agent has been ${activityStatus} for ${Math.round(elapsed / 60_000)} minutes with no response — it may be stuck. Consider pressing Ctrl+C to cancel.`,
+        );
+      }
+    }, 10_000); // check every 10s
+  };
+
+  const stopStallCheck = () => {
+    if (stallCheckTimer) {
+      clearInterval(stallCheckTimer);
+      stallCheckTimer = null;
+    }
+  };
+
   const state: TuiStateAccess = {
     get agentDefaultId() {
       return agentDefaultId;
@@ -651,7 +697,14 @@ export async function runTui(opts: TuiOptions) {
   };
 
   const setActivityStatus = (text: string) => {
+    const wasBusy = busyStates.has(activityStatus);
     activityStatus = text;
+    const isBusy = busyStates.has(activityStatus);
+    if (!wasBusy && isBusy) {
+      startStallCheck();
+    } else if (wasBusy && !isBusy) {
+      stopStallCheck();
+    }
     renderStatus();
   };
 
@@ -889,6 +942,16 @@ export async function runTui(opts: TuiOptions) {
     const reconnected = wasDisconnected;
     wasDisconnected = false;
     setConnectionStatus("connected");
+
+    // On reconnect, clear stale activeChatRunId — the server-side run
+    // may have completed or failed during the disconnect window.
+    // history reload below will fetch the latest state.
+    if (reconnected && activeChatRunId) {
+      activeChatRunId = null;
+      pendingOptimisticUserMessage = false;
+      setActivityStatus("idle");
+    }
+
     void (async () => {
       await refreshAgents();
       updateHeader();
