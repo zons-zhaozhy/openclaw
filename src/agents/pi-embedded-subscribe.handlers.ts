@@ -23,6 +23,26 @@ import { isPromiseLike } from "./pi-embedded-subscribe.promise.js";
 export function createEmbeddedPiSessionEventHandler(ctx: EmbeddedPiSubscribeContext) {
   let pendingEventChain: Promise<void> | null = null;
 
+  /**
+   * Emit a lifecycle error event so downstream consumers (TUI) can finalize the run.
+   * Called when a lifecycle-end handler fails synchronously or asynchronously.
+   */
+  const emitLifecycleErrorFallback = (evt: EmbeddedPiSubscribeEvent, err: unknown) => {
+    try {
+      void ctx.params.onAgentEvent?.({
+        stream: "lifecycle",
+        data: {
+          type: "lifecycle",
+          phase: "error",
+          runId: "runId" in evt ? (evt.runId as string) : ctx.params.runId,
+          error: err instanceof Error ? err.message : String(err),
+        },
+      });
+    } catch {
+      // Secondary emit failure — nothing more we can do
+    }
+  };
+
   const scheduleEvent = (
     evt: EmbeddedPiSubscribeEvent,
     handler: () => void | Promise<void>,
@@ -33,26 +53,12 @@ export function createEmbeddedPiSessionEventHandler(ctx: EmbeddedPiSubscribeCont
         return handler();
       } catch (err) {
         ctx.log.warn(`${evt.type} handler failed: ${String(err)}`);
-        // If a lifecycle-end handler fails, the run will never finalize on its own.
-        // Emit an error event so downstream consumers (TUI) can recover.
         if (
           evt.type === "lifecycle" &&
           "phase" in evt &&
           (evt.phase === "end" || evt.phase === "error")
         ) {
-          try {
-            void ctx.params.onAgentEvent?.({
-              stream: "lifecycle",
-              data: {
-                type: "lifecycle",
-                phase: "error",
-                runId: "runId" in evt ? (evt.runId as string) : ctx.params.runId,
-                error: err instanceof Error ? err.message : String(err),
-              },
-            });
-          } catch {
-            // Secondary emit failure — nothing more we can do
-          }
+          emitLifecycleErrorFallback(evt, err);
         }
         return;
       }
@@ -66,6 +72,13 @@ export function createEmbeddedPiSessionEventHandler(ctx: EmbeddedPiSubscribeCont
       const task = result
         .catch((err) => {
           ctx.log.warn(`${evt.type} handler failed (async): ${String(err)}`);
+          if (
+            evt.type === "lifecycle" &&
+            "phase" in evt &&
+            (evt.phase === "end" || evt.phase === "error")
+          ) {
+            emitLifecycleErrorFallback(evt, err);
+          }
         })
         .finally(() => {
           if (pendingEventChain === task) {
@@ -82,6 +95,13 @@ export function createEmbeddedPiSessionEventHandler(ctx: EmbeddedPiSubscribeCont
       .then(() => run())
       .catch((err) => {
         ctx.log.warn(`${evt.type} handler failed (chained): ${String(err)}`);
+        if (
+          evt.type === "lifecycle" &&
+          "phase" in evt &&
+          (evt.phase === "end" || evt.phase === "error")
+        ) {
+          emitLifecycleErrorFallback(evt, err);
+        }
       })
       .finally(() => {
         if (pendingEventChain === task) {
