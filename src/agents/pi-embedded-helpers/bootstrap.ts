@@ -5,6 +5,7 @@ import type { OpenClawConfig } from "../../config/config.js";
 import { normalizeOptionalString } from "../../shared/string-coerce.js";
 import { truncateUtf16Safe } from "../../utils.js";
 import type { WorkspaceBootstrapFile } from "../workspace.js";
+import { getCachedSummary, smartTrimBootstrap } from "./bootstrap-smart-summarizer.js";
 import type { EmbeddedContextFile } from "./types.js";
 
 type ContentBlockWithSignature = {
@@ -87,15 +88,6 @@ export const DEFAULT_BOOTSTRAP_MAX_CHARS = 20_000;
 export const DEFAULT_BOOTSTRAP_TOTAL_MAX_CHARS = 150_000;
 export const DEFAULT_BOOTSTRAP_PROMPT_TRUNCATION_WARNING_MODE = "once";
 const MIN_BOOTSTRAP_FILE_BUDGET_CHARS = 64;
-const BOOTSTRAP_HEAD_RATIO = 0.7;
-const BOOTSTRAP_TAIL_RATIO = 0.2;
-
-type TrimBootstrapResult = {
-  content: string;
-  truncated: boolean;
-  maxChars: number;
-  originalLength: number;
-};
 
 export function resolveBootstrapMaxChars(cfg?: OpenClawConfig): number {
   const raw = cfg?.agents?.defaults?.bootstrapMaxChars;
@@ -121,41 +113,6 @@ export function resolveBootstrapPromptTruncationWarningMode(
     return raw;
   }
   return DEFAULT_BOOTSTRAP_PROMPT_TRUNCATION_WARNING_MODE;
-}
-
-function trimBootstrapContent(
-  content: string,
-  fileName: string,
-  maxChars: number,
-): TrimBootstrapResult {
-  const trimmed = content.trimEnd();
-  if (trimmed.length <= maxChars) {
-    return {
-      content: trimmed,
-      truncated: false,
-      maxChars,
-      originalLength: trimmed.length,
-    };
-  }
-
-  const headChars = Math.floor(maxChars * BOOTSTRAP_HEAD_RATIO);
-  const tailChars = Math.floor(maxChars * BOOTSTRAP_TAIL_RATIO);
-  const head = trimmed.slice(0, headChars);
-  const tail = trimmed.slice(-tailChars);
-
-  const marker = [
-    "",
-    `[...truncated, read ${fileName} for full content...]`,
-    `…(truncated ${fileName}: kept ${headChars}+${tailChars} chars of ${trimmed.length})…`,
-    "",
-  ].join("\n");
-  const contentWithMarker = [head, marker, tail].join("\n");
-  return {
-    content: contentWithMarker,
-    truncated: true,
-    maxChars,
-    originalLength: trimmed.length,
-  };
 }
 
 function clampToBudget(content: string, budget: number): string {
@@ -199,10 +156,20 @@ export async function ensureSessionHeader(params: {
   });
 }
 
-export function buildBootstrapContextFiles(
+export async function buildBootstrapContextFiles(
   files: WorkspaceBootstrapFile[],
-  opts?: { warn?: (message: string) => void; maxChars?: number; totalMaxChars?: number },
-): EmbeddedContextFile[] {
+  opts?: {
+    warn?: (message: string) => void;
+    maxChars?: number;
+    totalMaxChars?: number;
+    /**
+     * Called fire-and-forget when a bootstrap file was truncated and had no cached LLM summary.
+     * The callback should trigger async LLM summarization and cache the result.
+     * Errors inside the callback are swallowed — it must not throw.
+     */
+    onSummaryNeeded?: (params: { content: string; fileName: string }) => void;
+  },
+): Promise<EmbeddedContextFile[]> {
   const maxChars = opts?.maxChars ?? DEFAULT_BOOTSTRAP_MAX_CHARS;
   const totalMaxChars = Math.max(
     1,
@@ -241,15 +208,36 @@ export function buildBootstrapContextFiles(
       break;
     }
     const fileMaxChars = Math.max(1, Math.min(maxChars, remainingTotalChars));
-    const trimmed = trimBootstrapContent(file.content ?? "", file.name, fileMaxChars);
+    const fileContent = file.content ?? "";
+
+    // Smart summarization: check cache first, then structure-aware extraction
+    let cachedSummary: string | null = null;
+    if (fileContent.length > fileMaxChars) {
+      try {
+        cachedSummary = await getCachedSummary(fileContent);
+      } catch {
+        // Cache read failure is non-fatal
+      }
+    }
+
+    const trimmed = smartTrimBootstrap(fileContent, file.name, fileMaxChars, cachedSummary);
     const contentWithinBudget = clampToBudget(trimmed.content, remainingTotalChars);
     if (!contentWithinBudget) {
       continue;
     }
     if (trimmed.truncated || contentWithinBudget.length < trimmed.content.length) {
       opts?.warn?.(
-        `workspace bootstrap file ${file.name} is ${trimmed.originalLength} chars (limit ${trimmed.maxChars}); truncating in injected context`,
+        `workspace bootstrap file ${file.name} is ${trimmed.originalLength} chars (limit ${fileMaxChars}); ` +
+          `${cachedSummary ? "using cached LLM summary" : "using structure-aware extraction"} in injected context`,
       );
+    }
+    // Fire-and-forget: trigger LLM summarization for next time when no cache exists
+    if (trimmed.truncated && !cachedSummary && opts?.onSummaryNeeded) {
+      try {
+        opts.onSummaryNeeded({ content: fileContent, fileName: file.name });
+      } catch {
+        // Callback must not throw, but guard anyway
+      }
     }
     remainingTotalChars = Math.max(0, remainingTotalChars - contentWithinBudget.length);
     result.push({

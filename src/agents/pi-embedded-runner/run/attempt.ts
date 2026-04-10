@@ -79,6 +79,7 @@ import {
   resolveBootstrapPromptTruncationWarningMode,
   resolveBootstrapTotalMaxChars,
 } from "../../pi-embedded-helpers.js";
+import { generateAndCacheBootstrapSummary } from "../../pi-embedded-helpers/bootstrap-smart-summarizer.js";
 import { subscribeEmbeddedPiSession } from "../../pi-embedded-subscribe.js";
 import { createPreparedEmbeddedPiSettingsManager } from "../../pi-project-settings.js";
 import { applyPiAutoCompactionGuard } from "../../pi-settings.js";
@@ -419,6 +420,52 @@ export async function runEmbeddedAttempt(
           warn: makeBootstrapWarn({ sessionLabel, warn: (message) => log.warn(message) }),
           contextMode: params.bootstrapContextMode,
           runKind: params.bootstrapContextRunKind,
+          onBootstrapSummaryNeeded: params.resolvedApiKey
+            ? (summaryParams) => {
+                // Fire-and-forget: generate LLM summary in background for next run
+                const callLLM = async (prompt: string): Promise<string> => {
+                  const response = await fetch(params.model.api, {
+                    method: "POST",
+                    headers: {
+                      "Content-Type": "application/json",
+                      Authorization: `Bearer ${params.resolvedApiKey}`,
+                      ...(params.model.provider === "anthropic"
+                        ? { "anthropic-version": "2023-06-01", "x-api-key": params.resolvedApiKey }
+                        : {}),
+                    },
+                    body: JSON.stringify({
+                      model: params.modelId,
+                      max_tokens: 4096,
+                      messages: [{ role: "user", content: prompt }],
+                    }),
+                    signal: AbortSignal.timeout(30_000),
+                  });
+                  if (!response.ok) {
+                    throw new Error(`Bootstrap summary LLM call failed: ${response.status}`);
+                  }
+                  const data = (await response.json()) as {
+                    content?: Array<{ type: string; text?: string }>;
+                    choices?: Array<{ message?: { content?: string } }>;
+                  };
+                  // Anthropic format
+                  if (data.content?.[0]?.text) {
+                    return data.content[0].text;
+                  }
+                  // OpenAI format
+                  if (data.choices?.[0]?.message?.content) {
+                    return data.choices[0].message.content;
+                  }
+                  return "";
+                };
+                void generateAndCacheBootstrapSummary({
+                  content: summaryParams.content,
+                  fileName: summaryParams.fileName,
+                  callLLM,
+                }).catch(() => {
+                  // Swallowed — fire-and-forget
+                });
+              }
+            : undefined,
         }),
     });
     const bootstrapMaxChars = resolveBootstrapMaxChars(params.config);

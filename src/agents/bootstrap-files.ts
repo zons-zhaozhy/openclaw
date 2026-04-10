@@ -228,15 +228,21 @@ export async function resolveBootstrapContextForRun(params: {
   warn?: (message: string) => void;
   contextMode?: BootstrapContextMode;
   runKind?: BootstrapContextRunKind;
+  /**
+   * Called fire-and-forget when a bootstrap file needs LLM summarization.
+   * When provided, enables async cache warming for future runs.
+   */
+  onBootstrapSummaryNeeded?: (params: { content: string; fileName: string }) => void;
 }): Promise<{
   bootstrapFiles: WorkspaceBootstrapFile[];
   contextFiles: EmbeddedContextFile[];
 }> {
   const bootstrapFiles = await resolveBootstrapFilesForRun(params);
-  const contextFiles = buildBootstrapContextFiles(bootstrapFiles, {
+  const contextFiles = await buildBootstrapContextFiles(bootstrapFiles, {
     maxChars: resolveBootstrapMaxChars(params.config),
     totalMaxChars: resolveBootstrapTotalMaxChars(params.config),
     warn: params.warn,
+    onSummaryNeeded: params.onBootstrapSummaryNeeded,
   });
   return { bootstrapFiles, contextFiles };
 }

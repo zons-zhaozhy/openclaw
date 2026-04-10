@@ -46,71 +46,96 @@ describe("ensureSessionHeader", () => {
 });
 
 describe("buildBootstrapContextFiles", () => {
-  it("keeps missing markers", () => {
+  it("keeps missing markers", async () => {
     const files = [makeFile({ missing: true, content: undefined })];
-    expect(buildBootstrapContextFiles(files)).toEqual([
+    expect(await buildBootstrapContextFiles(files)).toEqual([
       {
         path: "/tmp/AGENTS.md",
         content: "[MISSING] Expected at: /tmp/AGENTS.md",
       },
     ]);
   });
-  it("skips empty or whitespace-only content", () => {
+  it("skips empty or whitespace-only content", async () => {
     const files = [makeFile({ content: "   \n  " })];
-    expect(buildBootstrapContextFiles(files)).toEqual([]);
+    expect(await buildBootstrapContextFiles(files)).toEqual([]);
   });
-  it("truncates large bootstrap content", () => {
-    const head = `HEAD-${"a".repeat(600)}`;
-    const tail = `${"b".repeat(300)}-TAIL`;
-    const long = `${head}${tail}`;
+  it("truncates large bootstrap content using smart summarization", async () => {
+    const long =
+      "# Header\n\n" + "MUST do something important\n\n".repeat(100) + "## Tail\n\ntail content";
     const files = [makeFile({ name: "TOOLS.md", content: long })];
     const warnings: string[] = [];
     const maxChars = 200;
-    const expectedTailChars = Math.floor(maxChars * 0.2);
-    const [result] = buildBootstrapContextFiles(files, {
+    const [result] = await buildBootstrapContextFiles(files, {
       maxChars,
       warn: (message) => warnings.push(message),
     });
-    expect(result?.content).toContain("[...truncated, read TOOLS.md for full content...]");
-    expect(result?.content.length).toBeLessThan(long.length);
-    expect(result?.content.startsWith(long.slice(0, 120))).toBe(true);
-    expect(result?.content.endsWith(long.slice(-expectedTailChars))).toBe(true);
+    expect(result?.content).toBeDefined();
+    expect(result.content.length).toBeLessThan(long.length);
+    expect(result.content.length).toBeLessThanOrEqual(maxChars + 100); // Allow some slack for structure extraction
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain("TOOLS.md");
     expect(warnings[0]).toContain("limit 200");
   });
-  it("keeps content under the default limit", () => {
+  it("keeps content under the default limit", async () => {
     const long = "a".repeat(DEFAULT_BOOTSTRAP_MAX_CHARS - 10);
     const files = [makeFile({ content: long })];
-    const [result] = buildBootstrapContextFiles(files);
+    const [result] = await buildBootstrapContextFiles(files);
     expect(result?.content).toBe(long);
     expect(result?.content).not.toContain("[...truncated, read AGENTS.md for full content...]");
   });
 
-  it("keeps total injected bootstrap characters under the new default total cap", () => {
-    const files = createLargeBootstrapFiles();
-    const result = buildBootstrapContextFiles(files);
+  it("keeps total injected bootstrap characters under the new default total cap", async () => {
+    const files = [
+      makeFile({
+        name: "AGENTS.md",
+        content: "# Rules\n\nMUST follow rule A\n\n" + "a".repeat(10_000),
+      }),
+      makeFile({
+        name: "SOUL.md",
+        path: "/tmp/SOUL.md",
+        content: "# Soul\n\nMUST be kind\n\n" + "b".repeat(10_000),
+      }),
+      makeFile({
+        name: "USER.md",
+        path: "/tmp/USER.md",
+        content: "# User\n\nALWAYS help\n\n" + "c".repeat(10_000),
+      }),
+    ];
+    const result = await buildBootstrapContextFiles(files);
     const totalChars = result.reduce((sum, entry) => sum + entry.content.length, 0);
     expect(totalChars).toBeLessThanOrEqual(DEFAULT_BOOTSTRAP_TOTAL_MAX_CHARS);
     expect(result).toHaveLength(3);
-    expect(result[2]?.content).toBe("c".repeat(10_000));
   });
 
-  it("caps total injected bootstrap characters when totalMaxChars is configured", () => {
-    const files = createLargeBootstrapFiles();
-    const result = buildBootstrapContextFiles(files, { totalMaxChars: 24_000 });
+  it("caps total injected bootstrap characters when totalMaxChars is configured", async () => {
+    const files = [
+      makeFile({
+        name: "AGENTS.md",
+        content: "# Rules\n\nMUST follow rule A\n\n" + "a".repeat(10_000),
+      }),
+      makeFile({
+        name: "SOUL.md",
+        path: "/tmp/SOUL.md",
+        content: "# Soul\n\nMUST be kind\n\n" + "b".repeat(10_000),
+      }),
+      makeFile({
+        name: "USER.md",
+        path: "/tmp/USER.md",
+        content: "# User\n\nALWAYS help\n\n" + "c".repeat(10_000),
+      }),
+    ];
+    const result = await buildBootstrapContextFiles(files, { totalMaxChars: 24_000 });
     const totalChars = result.reduce((sum, entry) => sum + entry.content.length, 0);
     expect(totalChars).toBeLessThanOrEqual(24_000);
     expect(result).toHaveLength(3);
-    expect(result[2]?.content).toContain("[...truncated, read USER.md for full content...]");
   });
 
-  it("enforces strict total cap even when truncation markers are present", () => {
+  it("enforces strict total cap even when truncation markers are present", async () => {
     const files = [
       makeFile({ name: "AGENTS.md", content: "a".repeat(1_000) }),
       makeFile({ name: "SOUL.md", path: "/tmp/SOUL.md", content: "b".repeat(1_000) }),
     ];
-    const result = buildBootstrapContextFiles(files, {
+    const result = await buildBootstrapContextFiles(files, {
       maxChars: 100,
       totalMaxChars: 150,
     });
@@ -118,18 +143,18 @@ describe("buildBootstrapContextFiles", () => {
     expect(totalChars).toBeLessThanOrEqual(150);
   });
 
-  it("skips bootstrap injection when remaining total budget is too small", () => {
+  it("skips bootstrap injection when remaining total budget is too small", async () => {
     const files = [makeFile({ name: "AGENTS.md", content: "a".repeat(1_000) })];
-    const result = buildBootstrapContextFiles(files, {
+    const result = await buildBootstrapContextFiles(files, {
       maxChars: 200,
       totalMaxChars: 40,
     });
     expect(result).toEqual([]);
   });
 
-  it("keeps missing markers under small total budgets", () => {
+  it("keeps missing markers under small total budgets", async () => {
     const files = [makeFile({ missing: true, content: undefined })];
-    const result = buildBootstrapContextFiles(files, {
+    const result = await buildBootstrapContextFiles(files, {
       totalMaxChars: 20,
     });
     expect(result).toHaveLength(1);
@@ -137,7 +162,7 @@ describe("buildBootstrapContextFiles", () => {
     expect(result[0]?.content.startsWith("[MISSING]")).toBe(true);
   });
 
-  it("skips files with missing or invalid paths and emits warnings", () => {
+  it("skips files with missing or invalid paths and emits warnings", async () => {
     const malformedMissingPath = {
       name: "SKILL-SECURITY.md",
       missing: false,
@@ -157,7 +182,7 @@ describe("buildBootstrapContextFiles", () => {
     } as unknown as WorkspaceBootstrapFile;
     const good = makeFile({ content: "hello" });
     const warnings: string[] = [];
-    const result = buildBootstrapContextFiles(
+    const result = await buildBootstrapContextFiles(
       [malformedMissingPath, malformedNonStringPath, malformedWhitespacePath, good],
       {
         warn: (msg) => warnings.push(msg),
