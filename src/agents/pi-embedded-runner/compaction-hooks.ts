@@ -261,6 +261,7 @@ export async function runAfterCompactionHooks(params: {
   summaryLength?: number;
   tokensBefore?: number;
   firstKeptEntryId?: string;
+  config?: OpenClawConfig;
 }) {
   try {
     const hookEvent = createInternalHookEvent("session", "compact:after", params.hookSessionKey, {
@@ -273,6 +274,9 @@ export async function runAfterCompactionHooks(params: {
       tokensBefore: params.tokensBefore,
       tokensAfter: params.tokensAfter,
       firstKeptEntryId: params.firstKeptEntryId,
+      sessionFile: params.sessionFile,
+      workspaceDir: params.workspaceDir,
+      cfg: params.config,
     });
     await triggerInternalHook(hookEvent);
   } catch (err) {
